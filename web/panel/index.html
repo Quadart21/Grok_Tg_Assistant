@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kot_Teamlead — Telegram панель</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="app">
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="brand-text">
+        <span class="brand-name">Kot_Teamlead</span>
+        <span class="brand-dev">разработчик: Kot_Teamlead</span>
+      </div>
+    </div>
+
+    <nav class="top-nav" id="tabNav">
+      <button type="button" class="nav-item active" data-tab="outreach">Рассылка</button>
+      <button type="button" class="nav-item" data-tab="connect">Подключение</button>
+      <button type="button" class="nav-item" data-tab="accounts">Аккаунты</button>
+      <button type="button" class="nav-item" data-tab="proxies">Прокси</button>
+      <button type="button" class="nav-item" data-tab="roles">Стиль</button>
+      <button type="button" class="nav-item" data-tab="dialogs">Переписки</button>
+      <button type="button" class="nav-item" data-tab="agents">AI Агент</button>
+    </nav>
+
+    <div class="header-meta">
+      <span class="header-status" id="statusBar">загрузка...</span>
+      <span class="status-pill" id="runBadge">остановлено</span>
+    </div>
+  </header>
+
+  <main class="content">
+      <!-- Рассылка -->
+      <section class="panel active" id="panel-outreach" data-title="Рассылка">
+        <header class="page-header">
+          <h2>Рассылка</h2>
+          <p class="lead">Первые сообщения новым контактам и автоматическое ведение диалогов с помощью AI.</p>
+        </header>
+        <div class="page-grid page-grid-2">
+          <div class="card card-accent">
+            <div class="card-header">
+              <div>
+                <h3>Кому написать</h3>
+                <p class="hint">Username — по одному на строку, с @ или без</p>
+              </div>
+            </div>
+            <textarea id="targets" rows="6" placeholder="ivan_petrov&#10;maria_shop"></textarea>
+            <label class="label">Подсказка для AI (необязательно)</label>
+            <input type="text" id="extraContext" placeholder="Например: предложить сотрудничество">
+            <div class="checks">
+              <label><input type="checkbox" id="enableDialog" checked> Вести диалог — отвечать автоматически</label>
+              <label><input type="checkbox" id="resumeExisting" checked> Продолжить прошлые диалоги</label>
+            </div>
+            <div class="btn-row">
+              <button class="btn primary" id="btnStart">▶ Запустить</button>
+              <button class="btn ghost" id="btnResume">↻ Продолжить</button>
+              <button class="btn danger" id="btnStop" disabled>■ Стоп</button>
+            </div>
+            <p class="stats" id="engineStats">Ожидание запуска</p>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <h3>Журнал событий</h3>
+            </div>
+            <pre id="logBox"></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- Подключение -->
+      <section class="panel" id="panel-connect" data-title="Подключение">
+        <header class="page-header">
+          <h2>Подключение</h2>
+          <p class="lead">Telegram API, ключи AI-провайдеров и общие параметры рассылки.</p>
+        </header>
+        <div class="page-grid">
+          <div class="card">
+            <p class="section-label">Telegram</p>
+            <p class="hint">Ключи на <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a></p>
+            <div class="grid2">
+              <div><label class="label">API ID</label><input type="number" id="apiId"></div>
+              <div><label class="label">API Hash</label><input type="text" id="apiHash"></div>
+            </div>
+            <label class="label">Пароль 2FA (общий для всех сессий)</label>
+            <p class="hint">Облачный 2FA или локальный пароль tdata. Файл <code>twoFA.txt</code> в папке аккаунта имеет приоритет.</p>
+            <input type="password" id="telegram2fa" placeholder="Общий пароль" autocomplete="off">
+          </div>
+
+          <div class="card card-violet">
+            <p class="section-label">Искусственный интеллект</p>
+            <p class="hint">Провайдер и модель для генерации сообщений. Можно сохранить ключи нескольких сервисов.</p>
+            <div class="grid2">
+              <div>
+                <label class="label">Провайдер</label>
+                <select id="llmProvider"></select>
+              </div>
+              <div>
+                <label class="label">Модель</label>
+                <div class="row-inline">
+                  <select id="llmModel"></select>
+                  <button type="button" class="btn btn-sm ghost" id="btnRefreshModels" title="Обновить с API">↻</button>
+                </div>
+              </div>
+            </div>
+            <p class="hint" id="llmModelHint"></p>
+            <details class="llm-keys">
+              <summary>API-ключи провайдеров</summary>
+              <div class="grid2 llm-keys-grid">
+                <div><label class="label">Grok (xAI)</label><input type="password" id="grokKey" autocomplete="off"></div>
+                <div><label class="label">OpenAI</label><input type="password" id="openaiKey" autocomplete="off"></div>
+                <div><label class="label">Google Gemini</label><input type="password" id="geminiKey" autocomplete="off"></div>
+                <div><label class="label">Anthropic Claude</label><input type="password" id="anthropicKey" autocomplete="off"></div>
+                <div><label class="label">DeepSeek</label><input type="password" id="deepseekKey" autocomplete="off"></div>
+                <div><label class="label">OpenRouter</label><input type="password" id="openrouterKey" autocomplete="off"></div>
+              </div>
+            </details>
+            <input type="hidden" id="grokModel">
+          </div>
+
+          <div class="card">
+            <p class="section-label">Тайминги и язык</p>
+            <div class="grid2">
+              <div><label class="label">Пауза между сообщениями (сек)</label><input type="number" id="delayMsg" value="30"></div>
+              <div><label class="label">Аккаунтов одновременно</label><input type="number" id="concurrent" value="5"></div>
+              <div><label class="label">Пауза ответа от (сек)</label><input type="number" id="replyMin" value="5"></div>
+              <div><label class="label">Пауза ответа до (сек)</label><input type="number" id="replyMax" value="25"></div>
+              <div><label class="label">Язык</label><input type="text" id="language" value="ru"></div>
+            </div>
+            <div class="btn-row">
+              <button class="btn primary" id="btnSaveConfig">Сохранить настройки</button>
+            </div>
+            <p id="configMsg" class="msg"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Аккаунты -->
+      <section class="panel" id="panel-accounts" data-title="Аккаунты">
+        <header class="page-header">
+          <div class="row-between" style="width:100%">
+            <div>
+              <h2>Аккаунты</h2>
+              <p class="lead">Сессии, конвертация tdata и массовая смена профиля. Пул прокси — во вкладке «Прокси». Папка: <code id="sessionsPath">sessions/</code></p>
+            </div>
+            <button class="btn ghost" id="btnRefreshAccounts">↻ Обновить</button>
+          </div>
+        </header>
+
+        <div class="page-grid">
+          <div class="card card-green card-nested">
+            <h3>Конвертер tdata → .session</h3>
+            <p class="hint">Нужны API ID/Hash. 2FA — <code>twoFA.txt</code> или общий пароль в «Подключение».</p>
+            <div class="btn-row">
+              <button class="btn primary" id="btnConvertSelected">Конвертировать выбранные</button>
+              <button class="btn ghost" id="btnConvertAll">Конвертировать все tdata</button>
+            </div>
+            <p id="convertMsg" class="msg"></p>
+          </div>
+
+          <div class="card card-purple card-nested">
+            <h3>Массовая смена профиля</h3>
+            <p class="hint">Отметьте аккаунты галочками. При генерации у каждого — уникальные значения.</p>
+            <label class="label">Режим</label>
+            <select id="profileGenerateMode">
+              <option value="manual">Вручную (шаблоны)</option>
+              <option value="names">Случайные имя + фамилия</option>
+              <option value="nicks">Случайный ник (вместо имени)</option>
+            </select>
+            <div id="profileManualBlock">
+              <p class="hint">Шаблоны: <code>{n}</code>, <code>{id}</code></p>
+              <div class="profile-fields">
+                <label class="label inline-check"><input type="checkbox" id="profileChangeFirst"> Имя</label>
+                <input type="text" id="profileFirstName" placeholder="Anna">
+                <label class="label inline-check"><input type="checkbox" id="profileChangeLast"> Фамилия</label>
+                <input type="text" id="profileLastName" placeholder="Smith">
+                <label class="label inline-check"><input type="checkbox" id="profileChangeUsername"> Username</label>
+                <input type="text" id="profileUsername" placeholder="anna{n}">
+              </div>
+            </div>
+            <div id="profileGenerateBlock" class="hidden">
+              <label class="label">Язык</label>
+              <select id="profileLang">
+                <option value="ru">Русский</option>
+                <option value="en">English</option>
+              </select>
+              <label class="label inline-check"><input type="checkbox" id="profileWithUsername"> Сгенерировать username</label>
+              <div class="btn-row">
+                <button type="button" class="btn ghost" id="btnProfilePreview">Показать примеры</button>
+              </div>
+              <pre id="profilePreviewBox" class="profile-preview hidden"></pre>
+            </div>
+            <label class="label">Пауза между аккаунтами (сек)</label>
+            <input type="number" id="profileDelay" value="3" min="2" max="60" style="max-width:6rem">
+            <div class="btn-row">
+              <button class="btn primary" id="btnBulkProfile">Применить к выбранным</button>
+            </div>
+            <p id="profileMsg" class="msg"></p>
+          </div>
+
+          <div class="accounts-toolbar">
+            <div class="accounts-toolbar-block">
+              <span class="toolbar-label">Выбор</span>
+              <div class="accounts-toolbar-row">
+                <label class="inline-check"><input type="checkbox" id="chkSelectAllAccounts"> Все в таблице</label>
+                <label class="inline-check" title="Иначе новый фильтр заменяет выбор"><input type="checkbox" id="chkSelectAdditive"> Добавлять к выбору</label>
+                <button type="button" class="btn btn-sm ghost" id="btnClearAccountSelection">Снять всё</button>
+                <span class="accounts-selected-hint" id="accountsSelectedHint"></span>
+              </div>
+              <div class="filter-chips" id="accountSelectChips"></div>
+            </div>
+            <div class="accounts-toolbar-block">
+              <span class="toolbar-label">Показать в таблице</span>
+              <p class="hint" style="margin:0">По умолчанию — только аккаунты для рассылки. Снимите «Для рассылки», чтобы увидеть ассистентов и неактивные.</p>
+              <div class="filter-checks" id="accountViewFilters"></div>
+              <button type="button" class="btn btn-sm ghost" id="btnResetViewFilters">Сбросить показ</button>
+            </div>
+          </div>
+
+          <div class="split">
+            <div class="card" style="padding:0;overflow:hidden">
+              <div class="table-wrap" style="border:none;border-radius:0">
+                <table>
+                  <thead><tr><th></th><th>Аккаунт</th><th>Тип</th><th>.session</th><th>Прокси</th><th>Стиль</th></tr></thead>
+                  <tbody id="accountsTable"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="proxy-panel">
+              <h3>Привязка прокси</h3>
+              <p id="proxyAccountLabel" class="hint">Выберите аккаунт в таблице</p>
+              <label class="label">Прокси из пула</label>
+              <select id="proxyPoolSelect" disabled>
+                <option value="">— не выбран —</option>
+              </select>
+              <div class="btn-row">
+                <button class="btn primary" id="btnBindProxy" disabled>Привязать</button>
+                <button class="btn ghost" id="btnClearProxy" disabled>Отвязать</button>
+              </div>
+              <hr class="divider">
+              <details>
+                <summary>Добавить новый вручную</summary>
+                <label class="label">Тип</label>
+                <select id="proxyType">
+                  <option value="socks5">socks5</option>
+                  <option value="socks4">socks4</option>
+                  <option value="http">http</option>
+                </select>
+                <label class="label">Адрес</label>
+                <input type="text" id="proxyHost" placeholder="127.0.0.1">
+                <label class="label">Порт</label>
+                <input type="number" id="proxyPort" placeholder="1080">
+                <label class="label">Логин</label>
+                <input type="text" id="proxyUser">
+                <label class="label">Пароль</label>
+                <input type="password" id="proxyPass">
+                <div class="btn-row">
+                  <button class="btn ghost" id="btnSaveProxy" disabled>Сохранить и привязать</button>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Прокси -->
+      <section class="panel" id="panel-proxies" data-title="Прокси">
+        <header class="page-header">
+          <div class="row-between" style="width:100%">
+            <div>
+              <h2>Прокси</h2>
+              <p class="lead">Пул прокси с проверкой, страной и пингом. Привязка к аккаунтам — в таблице аккаунтов или массово.</p>
+            </div>
+            <button class="btn ghost" id="btnRefreshProxyPool">↻ Обновить</button>
+          </div>
+        </header>
+
+        <div class="page-grid">
+          <div class="card card-green">
+            <h3>Импорт в пул</h3>
+            <p class="hint">Список проверяется при добавлении: работоспособность, страна, дубликаты отбрасываются. В пул попадают только рабочие.</p>
+            <p class="hint">Форматы: <code>host:port</code>, <code>host:port:login:pass</code>, <code>login:pass@host:port</code></p>
+            <div class="grid2">
+              <div>
+                <label class="label">Список прокси</label>
+                <textarea id="proxyPoolImport" rows="6" placeholder="138.219.175.229:8000:user:pass"></textarea>
+              </div>
+              <div>
+                <label class="label">Тип по умолчанию</label>
+                <select id="proxyPoolType">
+                  <option value="socks5">socks5</option>
+                  <option value="socks4">socks4</option>
+                  <option value="http">http</option>
+                </select>
+                <div class="btn-row" style="margin-top:0.75rem">
+                  <button class="btn primary" id="btnImportProxyPool">Проверить и добавить</button>
+                  <button class="btn ghost" id="btnRecheckProxyPool">↻ Перепроверить пул</button>
+                </div>
+                <p id="proxyPoolMsg" class="msg"></p>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="accounts-toolbar proxy-pool-toolbar" style="margin:0;padding:0;border:none;background:transparent">
+              <div class="accounts-toolbar-block">
+                <span class="toolbar-label">Массовое управление</span>
+                <div class="accounts-toolbar-row">
+                  <label class="inline-check"><input type="checkbox" id="chkSelectAllProxies"> Все в таблице</label>
+                  <button type="button" class="btn btn-sm ghost" id="btnClearProxySelection">Снять всё</button>
+                  <span class="accounts-selected-hint" id="proxySelectedHint"></span>
+                </div>
+                <div class="filter-chips" id="proxySelectChips"></div>
+              </div>
+              <div class="accounts-toolbar-block">
+                <span class="toolbar-label">Показать</span>
+                <div class="filter-checks" id="proxyViewFilters"></div>
+                <div class="btn-row" style="margin:0.35rem 0 0">
+                  <button type="button" class="btn btn-sm ghost" id="btnProxyRecheckSelected">↻ Перепроверить</button>
+                  <button type="button" class="btn btn-sm danger" id="btnProxyDeleteSelected">Удалить</button>
+                  <button type="button" class="btn btn-sm danger" id="btnProxyPurgeDead">Удалить мёртвые</button>
+                  <button type="button" class="btn btn-sm primary" id="btnProxyAutoBind">Привязать к аккаунтам</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="table-wrap" style="margin-top:0.75rem">
+              <table>
+                <thead>
+                  <tr><th></th><th>Прокси</th><th>Страна</th><th>Статус</th><th>Пинг</th><th>Привязано</th><th></th></tr>
+                </thead>
+                <tbody id="proxyPoolTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Стиль -->
+      <section class="panel" id="panel-roles" data-title="Стиль и роли">
+        <header class="page-header">
+          <h2>Стиль и роли</h2>
+          <p class="lead">Мастер-промпт, роли общения и назначение стилей готовым аккаунтам.</p>
+        </header>
+        <div class="page-grid">
+          <div class="card card-violet">
+            <h3>Мастер-промпт</h3>
+            <p class="hint">Базовые правила для всех сообщений AI. Роли и агенты накладываются поверх, не заменяют.</p>
+            <label class="inline-check"><input type="checkbox" id="masterEnabled" checked> Использовать мастер-промпт</label>
+            <label class="label">Текст</label>
+            <textarea id="masterPrompt" rows="5" placeholder="Тон, запреты, стиль..."></textarea>
+            <button class="btn primary" id="btnSaveMaster">Сохранить мастер</button>
+            <p id="masterMsg" class="msg"></p>
+          </div>
+
+          <div class="card">
+            <h3>Стиль по умолчанию</h3>
+            <p class="hint">Для аккаунтов с «По умолчанию» в таблице назначений</p>
+            <textarea id="defaultRole" rows="3"></textarea>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3>Роли (стили общения)</h3>
+                <p class="hint">Каждая роль — слой поверх мастер-промпта</p>
+              </div>
+              <button class="btn ghost" id="btnAddGroup">+ Добавить роль</button>
+            </div>
+            <div id="roleGroups"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3>Назначение ролей</h3>
+                <p class="hint">Только аккаунты с рабочим <code>.session</code>. Дубли <code>_1</code> скрыты.</p>
+              </div>
+              <button class="btn ghost" id="btnRefreshRoleAssign">↻ Обновить</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Аккаунт</th><th>Роль</th></tr></thead>
+                <tbody id="roleAssignTable"></tbody>
+              </table>
+            </div>
+            <div class="btn-row">
+              <button class="btn primary" id="btnSaveRoles">Сохранить всё</button>
+            </div>
+            <p id="rolesMsg" class="msg"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Переписки -->
+      <section class="panel" id="panel-dialogs" data-title="Переписки">
+        <header class="page-header">
+          <h2>Переписки</h2>
+          <p class="lead">Настройки автоответов, лимиты и журнал активных диалогов.</p>
+        </header>
+        <div class="page-grid">
+          <div class="card">
+            <h3>Общие настройки</h3>
+            <p class="hint">Паузы, лимиты и стоп-слова для всех диалогов</p>
+            <div class="grid2" id="dialogSettingsForm"></div>
+            <label class="label">Стоп-слова (через запятую)</label>
+            <input type="text" id="ignoreKeywords" placeholder="стоп, stop, не пиши">
+            <label class="label">Доп. инструкция для AI</label>
+            <textarea id="globalExtraPrompt" rows="2"></textarea>
+            <button class="btn primary" id="btnSaveDialogSettings">Сохранить</button>
+            <p id="dialogSettingsMsg" class="msg"></p>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3>Список диалогов</h3>
+                <p class="hint">«Стереть память» — диалог не возобновится при запуске</p>
+              </div>
+              <div class="btn-row" style="margin:0">
+                <button class="btn danger btn-sm" id="btnClearAllDialogs">Очистить все</button>
+                <button class="btn ghost btn-sm" id="btnRefreshDialogs">↻</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Аккаунт</th><th>Кому</th><th>Тип</th><th>Статус</th><th>Авто</th>
+                    <th>Ответов</th><th>Сообщ.</th><th>Активность</th><th></th>
+                  </tr>
+                </thead>
+                <tbody id="dialogsTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- AI Агент -->
+      <section class="panel" id="panel-agents" data-title="AI Агент">
+        <header class="page-header">
+          <h2>AI Агент</h2>
+          <p class="lead">Живой секретарь: ведёт переписку, помнит контекст, следует вашему промпту.</p>
+        </header>
+        <div class="page-grid">
+          <div class="card card-accent">
+            <p class="hint">Ассистент <strong>автоматически исключается</strong> из общей рассылки и ведёт только свои диалоги. Можно запустить одного или нескольких — отметьте галочками в таблице.</p>
+            <div class="btn-row">
+              <button class="btn primary" id="btnAddAgent">+ Добавить агента</button>
+              <button class="btn ghost" id="btnRefreshAgents">↻ Обновить</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3>Настроенные агенты</h3>
+                <span class="chip" id="agentStats">Остановлен</span>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th></th><th>Аккаунт</th><th>Название</th><th>Язык</th><th>Статус</th><th></th>
+                  </tr>
+                </thead>
+                <tbody id="agentsTable"></tbody>
+              </table>
+            </div>
+            <div class="btn-row">
+              <button class="btn primary" id="btnStartAgents">▶ Запустить выбранных</button>
+              <button class="btn danger" id="btnStopAgents" disabled>■ Остановить</button>
+            </div>
+            <p id="agentsMsg" class="msg"></p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+  <!-- Modals -->
+  <div class="modal hidden" id="dialogModal">
+    <div class="modal-box">
+      <div class="row-between">
+        <h2 id="modalTitle">Диалог</h2>
+        <button class="btn btn-sm ghost" id="btnCloseModal">✕</button>
+      </div>
+      <div class="grid2">
+        <div>
+          <label class="label">Статус</label>
+          <select id="dlgStatus">
+            <option value="active">активен</option>
+            <option value="paused">на паузе</option>
+            <option value="closed">закрыт</option>
+          </select>
+        </div>
+        <div>
+          <label class="inline-check" style="margin-top:2rem"><input type="checkbox" id="dlgAutoReply"> Авто-ответ AI</label>
+        </div>
+        <div>
+          <label class="label">Лимит ответов (0 = ∞)</label>
+          <input type="number" id="dlgMaxReplies" min="0" value="0">
+        </div>
+        <div>
+          <label class="label">Ответов отправлено</label>
+          <input type="number" id="dlgRepliesCount" min="0" value="0">
+        </div>
+      </div>
+      <label class="label">Цель переписки</label>
+      <input type="text" id="dlgGoal" placeholder="Договориться о созвоне">
+      <label class="label">Доп. контекст для диалога</label>
+      <textarea id="dlgExtra" rows="2"></textarea>
+      <label class="label">Заметки (AI не видит)</label>
+      <textarea id="dlgNotes" rows="2"></textarea>
+      <div class="btn-row">
+        <button class="btn primary" id="btnSaveDialog">Сохранить</button>
+        <button class="btn ghost" id="btnClearDialogMemory">Стереть память</button>
+        <button class="btn danger" id="btnDeleteDialog">Удалить</button>
+      </div>
+      <h3>История</h3>
+      <div id="dlgHistory" class="history-box"></div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="agentModal">
+    <div class="modal-box">
+      <div class="row-between">
+        <h2 id="agentModalTitle">AI-агент</h2>
+        <button class="btn btn-sm ghost" id="btnCloseAgentModal">✕</button>
+      </div>
+      <label class="label">Аккаунт (сессия)</label>
+      <select id="agentAccount"></select>
+      <label class="label">Название</label>
+      <input type="text" id="agentName" placeholder="Мой секретарь">
+      <label class="label">Промпт агента</label>
+      <textarea id="agentPrompt" rows="6" placeholder="Ты личный секретарь..."></textarea>
+      <label class="label">Цель (необязательно)</label>
+      <input type="text" id="agentGoal" placeholder="Записать на встречу">
+      <div class="grid2">
+        <div>
+          <label class="label">Язык</label>
+          <input type="text" id="agentLanguage" value="ru">
+        </div>
+        <div>
+          <label class="inline-check" style="margin-top:2rem"><input type="checkbox" id="agentEnabled" checked> Включён</label>
+        </div>
+      </div>
+      <label class="label">Доп. контекст</label>
+      <textarea id="agentExtra" rows="2"></textarea>
+      <label class="label">Только этим (username через запятую)</label>
+      <input type="text" id="agentAllowed" placeholder="boss, partner">
+      <label class="label">Исключить (username)</label>
+      <input type="text" id="agentBlocked" placeholder="spam_bot">
+      <div class="btn-row">
+        <button class="btn primary" id="btnSaveAgent">Сохранить</button>
+        <button class="btn danger" id="btnDeleteAgent">Удалить</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/01-core.js?v=4"></script>
+  <script src="/static/js/02-proxies.js?v=4"></script>
+  <script src="/static/js/03-accounts.js?v=4"></script>
+  <script src="/static/js/04-app.js?v=4"></script>
+  <script src="/static/js/99-boot.js?v=4"></script>
+</body>
+</html>

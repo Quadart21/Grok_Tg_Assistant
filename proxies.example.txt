@@ -1,0 +1,8 @@
+# Формат: имя_аккаунта|тип|хост|порт|логин|пароль
+# имя_аккаунта = имя .session файла (без расширения) или папки tdata
+# тип: socks5, socks4, http
+#
+# Примеры:
+# account_001|socks5|127.0.0.1|1080|user|pass
+# account_002|socks5|proxy.example.com|9050||
+# tdata_folder_name|http|10.0.0.1|8080|login|secret

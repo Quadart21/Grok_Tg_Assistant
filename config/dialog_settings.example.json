@@ -1,0 +1,20 @@
+{
+  "history_for_grok": 40,
+  "max_stored_messages": 150,
+  "grok_temperature": 0.8,
+  "grok_max_tokens": 400,
+  "reply_delay_min_sec": 5,
+  "reply_delay_max_sec": 25,
+  "typing_delay_sec": 2,
+  "batch_messages_sec": 8,
+  "min_user_message_chars": 1,
+  "ignore_keywords": ["стоп", "stop", "не пиши", "отстань"],
+  "global_extra_prompt": "",
+  "max_replies_per_dialog": 0,
+  "max_replies_per_hour": 30,
+  "split_long_messages": false,
+  "split_at_chars": 350,
+  "sync_history_on_resume": true,
+  "sync_history_limit": 50,
+  "first_message_max_chars": 500
+}

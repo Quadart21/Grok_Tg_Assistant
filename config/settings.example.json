@@ -1,0 +1,23 @@
+{
+  "telegram_api_id": 0,
+  "telegram_api_hash": "",
+  "llm_provider": "grok",
+  "llm_model": "grok-3-mini",
+  "grok_api_key": "",
+  "grok_model": "grok-3-mini",
+  "openai_api_key": "",
+  "gemini_api_key": "",
+  "anthropic_api_key": "",
+  "deepseek_api_key": "",
+  "openrouter_api_key": "",
+  "sessions_dir": "sessions",
+  "proxies_file": "config/proxies.json",
+  "roles_file": "roles.json",
+  "delay_between_messages_sec": 30,
+  "max_concurrent_accounts": 5,
+  "message_language": "ru",
+  "reply_delay_min_sec": 5,
+  "reply_delay_max_sec": 25,
+  "telegram_2fa_password": "",
+  "state_file": "data/state.json"
+}

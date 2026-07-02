@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual env
+venv/
+.venv/
+env/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini
+
+# Secrets & local runtime data
+config/settings.json
+config/proxies.json
+config/proxy_pool.json
+config/agents.json
+config/master_prompt.json
+config/dialog_settings.json
+roles.json
+data/
+sessions/
+*.session
+*.session-journal
+
+# Archives / dumps
+*.rar
+*.zip
+*.7z
+
+# Generated frontend bundle
+web/panel/app.bundle.js
+
+# Logs
+*.log
