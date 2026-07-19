@@ -224,6 +224,42 @@ P.bindAccountProxy = async function(accountId, proxyId) {
   P.loadAccounts();
   P.refreshStatus();
 }
+
+P.$("#btnSaveProxy").onclick = async () => {
+  if (!P.state.selectedAccount) return alert("Выберите аккаунт");
+  try {
+    await P.api(`/api/accounts/${encodeURIComponent(P.state.selectedAccount)}/proxy`, {
+      method: "POST",
+      body: JSON.stringify({
+        type: P.$("#proxyType").value,
+        host: P.$("#proxyHost").value,
+        port: parseInt(P.$("#proxyPort").value) || 0,
+        username: P.$("#proxyUser").value,
+        password: P.$("#proxyPass").value,
+      }),
+    });
+    await P.loadProxyPool();
+    P.loadAccounts();
+    P.refreshStatus();
+    alert("Прокси добавлен в пул и привязан");
+  } catch (e) { alert(e.message); }
+};
+
+P.$("#btnBindProxy").onclick = async () => {
+  if (!P.state.selectedAccount) return;
+  try {
+    await P.bindAccountProxy(P.state.selectedAccount, P.$("#proxyPoolSelect").value || null);
+  } catch (e) { alert(e.message); }
+};
+
+P.$("#btnClearProxy").onclick = async () => {
+  if (!P.state.selectedAccount) return;
+  try {
+    await P.bindAccountProxy(P.state.selectedAccount, null);
+    P.fillProxyPoolSelect("");
+  } catch (e) { alert(e.message); }
+};
+
 P.$("#btnImportProxyPool").onclick = async () => {
   const lines = P.$("#proxyPoolImport")?.value?.trim();
   if (!lines) return alert("Вставьте список прокси");
@@ -378,6 +414,5 @@ P.$("#btnRefreshProxyPool").onclick = async () => {
   await P.loadProxyPool();
   P.loadAccounts();
 };
-
 
 })();

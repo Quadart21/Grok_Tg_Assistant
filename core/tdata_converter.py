@@ -3,9 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from opentele.api import UseCurrentSession
-from opentele.exception import PasswordIncorrect, TDataBadDecryptKey, TFileNotFound
-from opentele.td import TDesktop
 from telethon import TelegramClient, functions, password as pwd_mod
 from telethon.errors import (
     AuthKeyUnregisteredError,
@@ -22,6 +19,30 @@ from core.session_manager import (
     resolve_tdata_base,
     session_account_dir,
 )
+
+OPENTELE_HINT = (
+    "Конвертация tdata недоступна: не установлен opentele. "
+    "Используйте Python 3.10–3.12, перезапустите start.bat "
+    "или выполните: pip install -r requirements-tdata.txt"
+)
+
+
+def _load_opentele():
+    try:
+        from opentele.api import UseCurrentSession
+        from opentele.exception import PasswordIncorrect, TDataBadDecryptKey, TFileNotFound
+        from opentele.td import TDesktop
+    except ImportError as exc:
+        raise RuntimeError(OPENTELE_HINT) from exc
+    return UseCurrentSession, PasswordIncorrect, TDataBadDecryptKey, TFileNotFound, TDesktop
+
+
+def opentele_available() -> bool:
+    try:
+        import opentele  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 @dataclass
@@ -53,9 +74,10 @@ def remove_session_artifacts(session_path: Path) -> None:
 
 
 def _format_convert_error(exc: Exception) -> str:
+    name = type(exc).__name__
     if isinstance(exc, (AuthKeyUnregisteredError, AuthKeyNotFound)):
         return "Сессия отозвана Telegram — tdata устарел, нужен новый вход в Telegram Desktop"
-    if isinstance(exc, PasswordIncorrect):
+    if name == "PasswordIncorrect":
         return "Неверный пароль 2FA / локальный пароль"
     if isinstance(exc, (PasswordHashInvalidError, SessionPasswordNeededError)):
         return "Неверный или отсутствует облачный пароль 2FA — twoFA.txt в папке аккаунта"
@@ -72,8 +94,12 @@ async def _try_cloud_2fa(client, password: str) -> bool:
         pwd = await client(functions.account.GetPasswordRequest())
         await client(functions.auth.CheckPasswordRequest(pwd_mod.compute_check(pwd, password)))
         return await client.is_user_authorized()
-    except (PasswordHashInvalidError, SessionPasswordNeededError, PasswordIncorrect):
+    except (PasswordHashInvalidError, SessionPasswordNeededError):
         return False
+    except Exception as exc:
+        if type(exc).__name__ == "PasswordIncorrect":
+            return False
+        raise
 
 
 def _needs_2fa_message(session: SessionInfo, password: str) -> str:
@@ -119,6 +145,15 @@ async def convert_tdata_to_session(
             account_id=session.account_id,
             success=False,
             error="Это уже .session, конвертация не нужна",
+        )
+
+    try:
+        UseCurrentSession, PasswordIncorrect, TDataBadDecryptKey, TFileNotFound, TDesktop = _load_opentele()
+    except RuntimeError as exc:
+        return ConvertResult(
+            account_id=session.account_id,
+            success=False,
+            error=str(exc),
         )
 
     target = output or session_output_path(session)

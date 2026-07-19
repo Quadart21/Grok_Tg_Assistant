@@ -12,6 +12,7 @@ OUT = ROOT / "web" / "panel" / "js"
 STATE_VARS = [
     "selectedAccount", "selectedForRun", "accountsCache", "proxyPoolCache",
     "selectedProxies", "proxyViewFilters", "proxyFiltersInited", "selectedAgents",
+    "selectedGroupChatAccounts", "groupChatCommonCache",
     "logOffset", "llmProviders", "roleGroupsData", "roleAssignments", "roleGroupNames",
     "editingDialogKey", "editingAgentId", "currentDialogKey", "accountViewFilters", "accountFiltersInited",
 ]
@@ -34,6 +35,8 @@ CORE_HEAD = """  P.$ = (sel) => document.querySelector(sel);
     proxyViewFilters: new Set(),
     proxyFiltersInited: false,
     selectedAgents: new Set(),
+    selectedGroupChatAccounts: new Set(),
+    groupChatCommonCache: [],
     logOffset: 0,
     llmProviders: [],
     roleGroupsData: [],
@@ -63,7 +66,7 @@ def transform(body: str, fn_names: set[str] | None = None) -> str:
     body = re.sub(r"^async function (\w+)", r"P.\1 = async function", body, flags=re.MULTILINE)
     body = re.sub(r"^function (\w+)", r"P.\1 = function", body, flags=re.MULTILINE)
     body = re.sub(
-        r"^const (ACCOUNT_FILTERS|PROXY_FILTERS|DIALOG_SETTING_FIELDS) =",
+        r"^const (ACCOUNT_FILTERS|PROXY_FILTERS|DIALOG_SETTING_FIELDS|GROUP_CHAT_SETTING_FIELDS) =",
         r"P.\1 =",
         body,
         flags=re.MULTILINE,
@@ -84,7 +87,7 @@ def transform(body: str, fn_names: set[str] | None = None) -> str:
         if fn not in BARE_FN_SKIP:
             body = re.sub(rf"(?<!P\.)\b{re.escape(fn)}\b(?!\s*=)", f"P.{fn}", body)
 
-    for const in ("ACCOUNT_FILTERS", "PROXY_FILTERS", "DIALOG_SETTING_FIELDS"):
+    for const in ("ACCOUNT_FILTERS", "PROXY_FILTERS", "DIALOG_SETTING_FIELDS", "GROUP_CHAT_SETTING_FIELDS"):
         body = re.sub(rf"(?<!P\.)\b{const}\b", f"P.{const}", body)
 
     return body
@@ -111,6 +114,7 @@ BOOT_JS = """/* Kot_Teamlead boot */
   P.loadDialogSettings();
   P.loadDialogs();
   P.loadAgents();
+  P.loadGroupChat();
   P.refreshStatus();
   setInterval(async () => {
     await P.refreshStatus();
@@ -132,10 +136,10 @@ def main() -> None:
 
     OUT.mkdir(parents=True, exist_ok=True)
     files = {
-        "01-core.js": (sl(29, 33) + sl(40, 197), CORE_HEAD),
-        "02-proxies.js": (sl(199, 420) + sl(847, 1003), ""),
-        "03-accounts.js": (sl(422, 846), ""),
-        "04-app.js": (sl(1006, 1503), ""),
+        "01-core.js": (sl(31, 34) + sl(40, 253), CORE_HEAD),
+        "02-proxies.js": (sl(255, 477) + sl(869, 1057), ""),
+        "03-accounts.js": (sl(478, 867), ""),
+        "04-app.js": (sl(1059, 1778), ""),
     }
     for name, (body, head) in files.items():
         (OUT / name).write_text(wrap(body, head), encoding="utf-8")

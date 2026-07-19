@@ -22,6 +22,8 @@ class AppConfig:
     anthropic_api_key: str = ""
     deepseek_api_key: str = ""
     openrouter_api_key: str = ""
+    local_api_key: str = ""
+    local_base_url: str = "http://127.0.0.1:8000/v1"
     sessions_dir: str = "sessions"
     proxies_file: str = "config/proxies.json"
     roles_file: str = "roles.json"
@@ -50,7 +52,13 @@ class AppConfig:
         return provider_info(self.llm_provider or DEFAULT_PROVIDER).default_model
 
     def llm_configured(self) -> bool:
-        return bool(self.get_llm_api_key())
+        if not self.get_llm_api_key():
+            return False
+        if (self.llm_provider or "") == "local":
+            from core.llm_providers import normalize_openai_base_url
+
+            return bool(normalize_openai_base_url(self.local_base_url))
+        return True
 
     @classmethod
     def load(cls, path: Path) -> AppConfig:
@@ -75,6 +83,8 @@ class AppConfig:
             anthropic_api_key=str(data.get("anthropic_api_key") or ""),
             deepseek_api_key=str(data.get("deepseek_api_key") or ""),
             openrouter_api_key=str(data.get("openrouter_api_key") or ""),
+            local_api_key=str(data.get("local_api_key") or ""),
+            local_base_url=str(data.get("local_base_url") or "http://127.0.0.1:8000/v1"),
             sessions_dir=str(data.get("sessions_dir", "sessions")),
             proxies_file=str(data.get("proxies_file", "proxies.txt")),
             roles_file=str(data.get("roles_file", "roles.json")),
@@ -109,6 +119,8 @@ class AppConfig:
                     "anthropic_api_key": self.anthropic_api_key,
                     "deepseek_api_key": self.deepseek_api_key,
                     "openrouter_api_key": self.openrouter_api_key,
+                    "local_api_key": self.local_api_key,
+                    "local_base_url": self.local_base_url,
                     "sessions_dir": self.sessions_dir,
                     "proxies_file": self.proxies_file,
                     "roles_file": self.roles_file,

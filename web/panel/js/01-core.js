@@ -19,6 +19,8 @@
     proxyViewFilters: new Set(),
     proxyFiltersInited: false,
     selectedAgents: new Set(),
+    selectedGroupChatAccounts: new Set(),
+    groupChatCommonCache: [],
     logOffset: 0,
     llmProviders: [],
     roleGroupsData: [],
@@ -50,10 +52,12 @@ P.refreshStatus = async function() {
   P.$("#statusBar").textContent = parts.join(" · ");
   P.$("#sessionsPath").textContent = s.sessions_path;
   const badge = P.$("#runBadge");
-  const running = s.running || s.agent_running;
-  if (s.running && s.agent_running) badge.textContent = "рассылка + секретарь";
+  const running = s.running || s.agent_running || s.group_chat_running;
+  if (s.group_chat_running && (s.running || s.agent_running)) badge.textContent = "несколько режимов";
+  else if (s.running && s.agent_running) badge.textContent = "рассылка + секретарь";
   else if (s.running) badge.textContent = "рассылка";
   else if (s.agent_running) badge.textContent = "секретарь";
+  else if (s.group_chat_running) badge.textContent = "групповой чат";
   else badge.textContent = "остановлено";
   badge.classList.toggle("running", running);
   P.$("#btnStop").disabled = !s.running;
@@ -61,6 +65,10 @@ P.refreshStatus = async function() {
   P.$("#btnResume").disabled = s.running;
   P.$("#btnStopAgents").disabled = !s.agent_running;
   P.$("#btnStartAgents").disabled = s.agent_running;
+  const btnStopGc = P.$("#btnStopGroupChat");
+  const btnStartGc = P.$("#btnStartGroupChat");
+  if (btnStopGc) btnStopGc.disabled = !s.group_chat_running;
+  if (btnStartGc) btnStartGc.disabled = !!s.group_chat_running;
 }
 
 P.refreshEngine = async function() {
@@ -72,14 +80,18 @@ P.refreshEngine = async function() {
   try {
     const a = await P.api("/api/agents/stats");
     const el = P.$("#agentStats");
-    if (!el) return;
-    if (a.running) {
-      el.className = "chip ok";
-      el.textContent = `Онлайн: ${a.active_accounts} · Диалогов: ${a.active_dialogs} · Ответов: ${a.replies_sent}`;
-    } else {
-      el.className = "chip muted";
-      el.textContent = "Остановлен";
+    if (el) {
+      if (a.running) {
+        el.className = "chip ok";
+        el.textContent = `Онлайн: ${a.active_accounts} · Диалогов: ${a.active_dialogs} · Ответов: ${a.replies_sent}`;
+      } else {
+        el.className = "chip muted";
+        el.textContent = "Остановлен";
+      }
     }
+  } catch (_) {}
+  try {
+    await P.refreshGroupChatStatus();
   } catch (_) {}
 }
 
@@ -131,6 +143,12 @@ P.loadLlmProviders = async function() {
   };
 }
 
+P.syncLocalLlmUi = function() {
+  const isLocal = P.$("#llmProvider").value === "local";
+  const box = P.$("#localLlmBox");
+  if (box) box.classList.toggle("hidden", !isLocal);
+}
+
 P.loadConfig = async function() {
   if (!P.state.llmProviders.length) await P.loadLlmProviders();
   const c = await P.api("/api/config");
@@ -144,6 +162,9 @@ P.loadConfig = async function() {
   P.$("#anthropicKey").value = c.anthropic_api_key || "";
   P.$("#deepseekKey").value = c.deepseek_api_key || "";
   P.$("#openrouterKey").value = c.openrouter_api_key || "";
+  P.$("#localKey").value = c.local_api_key || "";
+  P.$("#localBaseUrl").value = c.local_base_url || "http://127.0.0.1:8000/v1";
+  P.syncLocalLlmUi();
   const savedModel = c.llm_model || c.grok_model || "grok-3-mini";
   await P.loadLlmModels(c.llm_provider || "grok", savedModel);
   P.$("#delayMsg").value = c.delay_between_messages_sec;
@@ -154,8 +175,41 @@ P.loadConfig = async function() {
   P.$("#telegram2fa").value = c.telegram_2fa_password || "";
 }
 
+P.$("#llmProvider")?.addEventListener("change", async () => {
+  P.syncLocalLlmUi();
+  try {
+    await P.loadLlmModels(P.$("#llmProvider").value, P.$("#llmModel").value);
+  } catch (_) {}
+});
+
 P.$("#btnRefreshModels").onclick = async () => {
   try {
+    if (P.$("#llmProvider").value === "local") {
+      await P.api("/api/config", {
+        method: "POST",
+        body: JSON.stringify({
+          telegram_api_id: parseInt(P.$("#apiId").value) || 0,
+          telegram_api_hash: P.$("#apiHash").value,
+          llm_provider: "local",
+          llm_model: P.$("#llmModel").value || "mistral-24b-ru-uncensored",
+          grok_api_key: P.$("#grokKey").value,
+          grok_model: P.$("#grokModel").value || "grok-3-mini",
+          openai_api_key: P.$("#openaiKey").value,
+          gemini_api_key: P.$("#geminiKey").value,
+          anthropic_api_key: P.$("#anthropicKey").value,
+          deepseek_api_key: P.$("#deepseekKey").value,
+          openrouter_api_key: P.$("#openrouterKey").value,
+          local_api_key: P.$("#localKey").value,
+          local_base_url: P.$("#localBaseUrl").value,
+          delay_between_messages_sec: parseInt(P.$("#delayMsg").value) || 30,
+          max_concurrent_accounts: parseInt(P.$("#concurrent").value) || 5,
+          reply_delay_min_sec: parseInt(P.$("#replyMin").value) || 5,
+          reply_delay_max_sec: parseInt(P.$("#replyMax").value) || 25,
+          message_language: P.$("#language").value || "ru",
+          telegram_2fa_password: P.$("#telegram2fa").value || "",
+        }),
+      });
+    }
     await P.loadLlmModels(P.$("#llmProvider").value, P.$("#llmModel").value);
     P.$("#configMsg").textContent = "Список моделей обновлён";
   } catch (e) {
@@ -179,6 +233,8 @@ P.$("#btnSaveConfig").addEventListener("click", async () => {
         anthropic_api_key: P.$("#anthropicKey").value,
         deepseek_api_key: P.$("#deepseekKey").value,
         openrouter_api_key: P.$("#openrouterKey").value,
+        local_api_key: P.$("#localKey").value,
+        local_base_url: P.$("#localBaseUrl").value,
         delay_between_messages_sec: parseInt(P.$("#delayMsg").value) || 30,
         max_concurrent_accounts: parseInt(P.$("#concurrent").value) || 5,
         message_language: P.$("#language").value,

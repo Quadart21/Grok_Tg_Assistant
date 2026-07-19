@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import httpx
 
-from core.llm_providers import LLM_PROVIDERS, provider_info
+from core.llm_providers import LLM_PROVIDERS, normalize_openai_base_url, provider_info
 
 # Актуальные модели (fallback, если API недоступен или нет ключа)
 STATIC_MODELS: dict[str, list[str]] = {
@@ -75,6 +75,9 @@ STATIC_MODELS: dict[str, list[str]] = {
         "mistralai/mistral-large-2411",
         "x-ai/grok-3-mini",
     ],
+    "local": [
+        "mistral-24b-ru-uncensored",
+    ],
 }
 
 MODELS_LIST_URLS: dict[str, str] = {
@@ -112,8 +115,10 @@ def _merge_models(provider_id: str, fetched: list[str]) -> list[str]:
     return combined
 
 
-async def fetch_models_live(provider_id: str, api_key: str) -> list[str]:
-    if not api_key.strip():
+async def fetch_models_live(
+    provider_id: str, api_key: str, local_base_url: str = ""
+) -> list[str]:
+    if not api_key.strip() and provider_id != "local":
         return static_models(provider_id)
 
     provider_id = provider_id if provider_id in LLM_PROVIDERS else "grok"
@@ -123,12 +128,32 @@ async def fetch_models_live(provider_id: str, api_key: str) -> list[str]:
             return await _fetch_gemini_models(api_key)
         if provider_id == "anthropic":
             return await _fetch_anthropic_models(api_key)
+        if provider_id == "local":
+            return await _fetch_local_models(api_key, local_base_url)
         if provider_id in MODELS_LIST_URLS:
             return await _fetch_openai_style_models(provider_id, api_key)
     except Exception:
         pass
 
     return static_models(provider_id)
+
+
+async def _fetch_local_models(api_key: str, local_base_url: str) -> list[str]:
+    base = normalize_openai_base_url(local_base_url)
+    if not base:
+        return static_models("local")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key.strip() else {}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(f"{base}/models", headers=headers)
+        response.raise_for_status()
+        data = response.json()
+    ids: list[str] = []
+    for item in data.get("data") or []:
+        mid = str(item.get("id") or "")
+        if mid:
+            ids.append(mid)
+    ids.sort()
+    return _merge_models("local", ids)
 
 
 async def _fetch_openai_style_models(provider_id: str, api_key: str) -> list[str]:
@@ -204,8 +229,10 @@ async def _fetch_anthropic_models(api_key: str) -> list[str]:
     return _merge_models("anthropic", ids)
 
 
-async def resolve_models(provider_id: str, api_key: str, current_model: str = "") -> dict:
-    models = await fetch_models_live(provider_id, api_key)
+async def resolve_models(
+    provider_id: str, api_key: str, current_model: str = "", local_base_url: str = ""
+) -> dict:
+    models = await fetch_models_live(provider_id, api_key, local_base_url)
     if current_model and current_model not in models:
         models.insert(0, current_model)
     default = provider_info(provider_id).default_model
@@ -217,5 +244,5 @@ async def resolve_models(provider_id: str, api_key: str, current_model: str = ""
         "models": models,
         "default_model": default,
         "selected_model": selected,
-        "live": bool(api_key.strip()),
+        "live": bool(api_key.strip()) or (provider_id == "local" and bool(local_base_url.strip())),
     }

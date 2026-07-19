@@ -69,6 +69,15 @@ LLM_PROVIDERS: dict[str, LLMProviderInfo] = {
         key_field="openrouter_api_key",
         api_style="openai",
     ),
+    "local": LLMProviderInfo(
+        id="local",
+        name="Local (llama.cpp / OpenAI-compatible)",
+        default_model="mistral-24b-ru-uncensored",
+        models_hint="имя alias из llama-server, напр. mistral-24b-ru-uncensored",
+        docs_url="https://github.com/ggerganov/llama.cpp",
+        key_field="local_api_key",
+        api_style="openai",
+    ),
 }
 
 OPENAI_COMPAT_URLS: dict[str, str] = {
@@ -80,6 +89,27 @@ OPENAI_COMPAT_URLS: dict[str, str] = {
 }
 
 DEFAULT_PROVIDER = "grok"
+
+
+def normalize_openai_base_url(url: str) -> str:
+    """Приводит URL к виду http://host:port/v1."""
+    u = (url or "").strip().rstrip("/")
+    if not u:
+        return ""
+    if u.endswith("/chat/completions"):
+        u = u[: -len("/chat/completions")].rstrip("/")
+    if u.endswith("/completions"):
+        u = u[: -len("/completions")].rstrip("/")
+    if not u.endswith("/v1"):
+        u = f"{u}/v1"
+    return u
+
+
+def chat_completions_url(provider_id: str, local_base_url: str = "") -> str:
+    if provider_id == "local":
+        base = normalize_openai_base_url(local_base_url)
+        return f"{base}/chat/completions" if base else ""
+    return OPENAI_COMPAT_URLS.get(provider_id, "")
 
 
 def provider_info(provider_id: str) -> LLMProviderInfo:

@@ -1,0 +1,3 @@
+# Optional: tdata -> .session (install after requirements.txt)
+# Needs Python 3.10–3.12 on Windows (pre-built wheels for tgcrypto).
+opentele>=1.15.1

@@ -177,12 +177,107 @@ class DialogRecord:
         )
 
 
+@dataclass
+class GroupChatMessage:
+    speaker_account_id: str
+    speaker_name: str
+    text: str
+    ts: str
+    msg_id: int | None = None
+    external: bool = False
+
+    def to_dict(self) -> dict:
+        return {
+            "speaker_account_id": self.speaker_account_id,
+            "speaker_name": self.speaker_name,
+            "text": self.text,
+            "ts": self.ts,
+            "msg_id": self.msg_id,
+            "external": self.external,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> GroupChatMessage:
+        return cls(
+            speaker_account_id=str(data.get("speaker_account_id", "")),
+            speaker_name=str(data.get("speaker_name", "")),
+            text=str(data.get("text", "")),
+            ts=str(data.get("ts", "")),
+            msg_id=data.get("msg_id"),
+            external=bool(data.get("external", False)),
+        )
+
+
+@dataclass
+class GroupSessionRecord:
+    chat_id: int
+    topic: str = ""
+    chat_title: str = ""
+    account_ids: list[str] = field(default_factory=list)
+    role_prompts: dict[str, str] = field(default_factory=dict)
+    role_names: dict[str, str] = field(default_factory=dict)
+    activity_weights: dict[str, float] = field(default_factory=dict)
+    extra_context: str = ""
+    status: str = "idle"
+    created_at: str = ""
+    last_activity: str = ""
+    messages: list[GroupChatMessage] = field(default_factory=list)
+    session_counts: dict[str, int] = field(default_factory=dict)
+    day_counts: dict[str, int] = field(default_factory=dict)
+    day_key: str = ""
+    group_day_count: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "chat_id": self.chat_id,
+            "topic": self.topic,
+            "chat_title": self.chat_title,
+            "account_ids": list(self.account_ids),
+            "role_prompts": dict(self.role_prompts),
+            "role_names": dict(self.role_names),
+            "activity_weights": dict(self.activity_weights),
+            "extra_context": self.extra_context,
+            "status": self.status,
+            "created_at": self.created_at,
+            "last_activity": self.last_activity,
+            "messages": [m.to_dict() for m in self.messages],
+            "session_counts": dict(self.session_counts),
+            "day_counts": dict(self.day_counts),
+            "day_key": self.day_key,
+            "group_day_count": self.group_day_count,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> GroupSessionRecord:
+        return cls(
+            chat_id=int(data.get("chat_id", 0)),
+            topic=str(data.get("topic", "")),
+            chat_title=str(data.get("chat_title", "")),
+            account_ids=[str(a) for a in data.get("account_ids", [])],
+            role_prompts={str(k): str(v) for k, v in (data.get("role_prompts") or {}).items()},
+            role_names={str(k): str(v) for k, v in (data.get("role_names") or {}).items()},
+            activity_weights={
+                str(k): float(v) for k, v in (data.get("activity_weights") or {}).items()
+            },
+            extra_context=str(data.get("extra_context", "")),
+            status=str(data.get("status", "idle")),
+            created_at=str(data.get("created_at", "")),
+            last_activity=str(data.get("last_activity", "")),
+            messages=[GroupChatMessage.from_dict(m) for m in data.get("messages", [])],
+            session_counts={str(k): int(v) for k, v in (data.get("session_counts") or {}).items()},
+            day_counts={str(k): int(v) for k, v in (data.get("day_counts") or {}).items()},
+            day_key=str(data.get("day_key", "")),
+            group_day_count=int(data.get("group_day_count", 0)),
+        )
+
+
 class StateStore:
     def __init__(self, path: Path) -> None:
         self.path = path
         self._lock = threading.Lock()
         self.accounts: dict[str, AccountBinding] = {}
         self.dialogs: dict[str, DialogRecord] = {}
+        self.group_session: GroupSessionRecord | None = None
         self.load()
 
     def load(self) -> None:
@@ -196,6 +291,8 @@ class StateStore:
         self.dialogs = {
             key: DialogRecord.from_dict(item) for key, item in data.get("dialogs", {}).items()
         }
+        gs = data.get("group_session")
+        self.group_session = GroupSessionRecord.from_dict(gs) if isinstance(gs, dict) else None
 
     def save(self) -> None:
         with self._lock:
@@ -203,8 +300,45 @@ class StateStore:
             payload = {
                 "accounts": {acc_id: b.to_dict() for acc_id, b in self.accounts.items()},
                 "dialogs": {key: d.to_dict() for key, d in self.dialogs.items()},
+                "group_session": self.group_session.to_dict() if self.group_session else None,
             }
             self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def upsert_group_session(self, session: GroupSessionRecord) -> GroupSessionRecord:
+        if not session.created_at:
+            session.created_at = _now_iso()
+        session.last_activity = _now_iso()
+        self.group_session = session
+        self.save()
+        return session
+
+    def add_group_message(
+        self,
+        session: GroupSessionRecord,
+        speaker_account_id: str,
+        speaker_name: str,
+        text: str,
+        msg_id: int | None = None,
+        external: bool = False,
+        max_stored: int = 200,
+    ) -> None:
+        if msg_id is not None and any(m.msg_id == msg_id for m in session.messages):
+            return
+        session.messages.append(
+            GroupChatMessage(
+                speaker_account_id=speaker_account_id,
+                speaker_name=speaker_name,
+                text=text,
+                ts=_now_iso(),
+                msg_id=msg_id,
+                external=external,
+            )
+        )
+        if len(session.messages) > max_stored:
+            session.messages = session.messages[-max_stored:]
+        session.last_activity = _now_iso()
+        self.group_session = session
+        self.save()
 
     def get_account_binding(self, account_id: str) -> AccountBinding | None:
         return self.accounts.get(account_id)

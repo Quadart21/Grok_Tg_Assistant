@@ -15,6 +15,9 @@ from core.agent_engine import AgentEngine, AgentStats
 from core.config import AppConfig, ProxyConfig, RoleGroup, RolesConfig
 from core.dialog_settings import DialogSettings
 from core.dialog_engine import DialogEngine, EngineStats
+from core.group_chat_discovery import discover_common_chats
+from core.group_chat_engine import GroupChatEngine, GroupChatStats
+from core.group_chat_settings import GroupChatSettings
 from core.llm_client import create_llm_client
 from core.llm_models import resolve_models, static_models
 from core.llm_providers import LLM_PROVIDERS, list_providers_dict, provider_info
@@ -75,20 +78,26 @@ class AppService:
         self.dialog_settings_path = base_dir / "config" / "dialog_settings.json"
         self.agents_path = base_dir / "config" / "agents.json"
         self.master_prompt_path = base_dir / "config" / "master_prompt.json"
+        self.group_chat_settings_path = base_dir / "config" / "group_chat.json"
         self.config = self._load_config()
         self.roles = self._load_roles()
         self.state_store = StateStore(base_dir / self.config.state_file)
         self.engine: DialogEngine | None = None
         self.agent_engine: AgentEngine | None = None
+        self.group_chat_engine: GroupChatEngine | None = None
         self.worker_thread: threading.Thread | None = None
         self.agent_thread: threading.Thread | None = None
+        self.group_chat_thread: threading.Thread | None = None
         self._logs: deque[str] = deque(maxlen=500)
         self._stats = EngineStats()
         self._agent_stats = AgentStats()
+        self._group_chat_stats = GroupChatStats()
         self._running = False
         self._agent_running = False
+        self._group_chat_running = False
         self._running_agent_ids: set[str] = set()
         self._outreach_account_ids: set[str] = set()
+        self._group_chat_account_ids: set[str] = set()
         self._lock = threading.Lock()
 
     def _load_config(self) -> AppConfig:
@@ -208,6 +217,7 @@ class AppService:
             "paused_dialogs": len(self.state_store.list_all_dialogs({"paused"})),
             "running": self._running,
             "agent_running": self._agent_running,
+            "group_chat_running": self._group_chat_running,
             "agents_count": len(AgentsConfig.load(self.agents_path).agents),
             "sessions_path": str(self.base_dir / self.config.sessions_dir),
         }
@@ -226,9 +236,10 @@ class AppService:
         if provider_id == "grok" and not api_key:
             api_key = (self.config.grok_api_key or "").strip()
         current = self.config.get_llm_model() if provider_id == self.config.llm_provider else ""
+        local_base = self.config.local_base_url if provider_id == "local" else ""
 
         async def run() -> dict:
-            return await resolve_models(provider_id, api_key, current)
+            return await resolve_models(provider_id, api_key, current, local_base)
 
         loop = asyncio.new_event_loop()
         try:
@@ -249,6 +260,8 @@ class AppService:
             "anthropic_api_key": self.config.anthropic_api_key,
             "deepseek_api_key": self.config.deepseek_api_key,
             "openrouter_api_key": self.config.openrouter_api_key,
+            "local_api_key": self.config.local_api_key,
+            "local_base_url": self.config.local_base_url,
             "delay_between_messages_sec": self.config.delay_between_messages_sec,
             "max_concurrent_accounts": self.config.max_concurrent_accounts,
             "message_language": self.config.message_language,
@@ -269,6 +282,8 @@ class AppService:
         self.config.anthropic_api_key = str(data.get("anthropic_api_key") or "")
         self.config.deepseek_api_key = str(data.get("deepseek_api_key") or "")
         self.config.openrouter_api_key = str(data.get("openrouter_api_key") or "")
+        self.config.local_api_key = str(data.get("local_api_key") or "")
+        self.config.local_base_url = str(data.get("local_base_url") or "http://127.0.0.1:8000/v1")
         if self.config.llm_provider == "grok" and not self.config.grok_api_key:
             self.config.grok_api_key = self.config.get_llm_api_key()
         self.config.delay_between_messages_sec = int(data.get("delay_between_messages_sec") or 30)
@@ -990,6 +1005,10 @@ class AppService:
                 overlap = set(a.account_id for a in to_run) & self._get_outreach_account_ids()
                 if overlap:
                     return False, f"Аккаунты заняты рассылкой: {', '.join(sorted(overlap))}"
+            if self._group_chat_running:
+                overlap = set(a.account_id for a in to_run) & self._group_chat_account_ids
+                if overlap:
+                    return False, f"Аккаунты заняты групповым чатом: {', '.join(sorted(overlap))}"
 
             run_ids = [a.account_id for a in to_run]
             self._agent_running = True
@@ -1081,6 +1100,10 @@ class AppService:
                 overlap = outreach_ids & self._running_agent_ids
                 if overlap:
                     return False, f"Аккаунты заняты секретарём: {', '.join(sorted(overlap))}"
+            if self._group_chat_running:
+                overlap = outreach_ids & self._group_chat_account_ids
+                if overlap:
+                    return False, f"Аккаунты заняты групповым чатом: {', '.join(sorted(overlap))}"
 
             self._running = True
             self._stats = EngineStats()
@@ -1130,3 +1153,130 @@ class AppService:
         if self.engine:
             self.engine.stop()
             self.log("■ Останавливаем...")
+
+    def get_group_chat_settings(self) -> dict[str, Any]:
+        return GroupChatSettings.load(self.group_chat_settings_path).to_dict()
+
+    def save_group_chat_settings(self, data: dict[str, Any]) -> dict[str, Any]:
+        settings = GroupChatSettings.from_dict(data)
+        settings.save(self.group_chat_settings_path)
+        return settings.to_dict()
+
+    def discover_group_chats(self, account_ids: list[str]) -> list[dict]:
+        if len(account_ids) < 2:
+            raise ValueError("Выберите минимум 2 аккаунта")
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(
+                discover_common_chats(self.config, self.base_dir, account_ids, log=self.log)
+            )
+        finally:
+            loop.close()
+
+    def get_group_chat_status(self) -> dict[str, Any]:
+        s = self._group_chat_stats
+        return {
+            "running": self._group_chat_running,
+            "paused_schedule": s.paused_schedule,
+            "chat_id": s.chat_id,
+            "chat_title": s.chat_title,
+            "topic": s.topic,
+            "account_ids": list(s.account_ids),
+            "messages_sent": s.messages_sent,
+            "last_speaker": s.last_speaker,
+            "last_message": s.last_message,
+            "status_text": s.status_text,
+            "session_counts": dict(s.session_counts),
+            "day_counts": dict(s.day_counts),
+            "group_day_count": s.group_day_count,
+            "recent_messages": list(s.recent_messages),
+            "running_accounts": sorted(self._group_chat_account_ids),
+        }
+
+    def start_group_chat(
+        self,
+        account_ids: list[str],
+        chat_id: int,
+        topic: str,
+        role_overrides: dict[str, dict] | None = None,
+        activity_weights: dict[str, float] | None = None,
+        extra_context: str = "",
+        chat_title: str = "",
+    ) -> tuple[bool, str]:
+        with self._lock:
+            if self._group_chat_running:
+                return False, "Групповой чат уже запущен"
+            if len(account_ids) < 2:
+                return False, "Выберите минимум 2 аккаунта"
+            if not chat_id:
+                return False, "Выберите общий чат"
+            if not self.config.telegram_api_id or not self.config.telegram_api_hash:
+                return False, "Укажите Telegram API ID и Hash"
+            if not self.config.llm_configured():
+                info = provider_info(self.config.llm_provider)
+                return False, f"Укажите API-ключ для {info.name}"
+
+            sessions = discover_sessions(self.base_dir / self.config.sessions_dir)
+            session_ids = {s.account_id for s in sessions}
+            missing = [a for a in account_ids if a not in session_ids]
+            if missing:
+                return False, f"Аккаунты не найдены: {', '.join(missing[:3])}"
+
+            ids = set(account_ids)
+            if self._running:
+                overlap = ids & self._get_outreach_account_ids()
+                if overlap:
+                    return False, f"Аккаунты заняты рассылкой: {', '.join(sorted(overlap))}"
+            if self._agent_running:
+                overlap = ids & self._running_agent_ids
+                if overlap:
+                    return False, f"Аккаунты заняты секретарём: {', '.join(sorted(overlap))}"
+
+            self._group_chat_running = True
+            self._group_chat_account_ids = set(account_ids)
+            self._group_chat_stats = GroupChatStats(
+                running=True,
+                chat_id=int(chat_id),
+                chat_title=chat_title,
+                topic=topic,
+                account_ids=list(account_ids),
+            )
+
+        self.group_chat_engine = GroupChatEngine(
+            self.config,
+            self.base_dir,
+            log=self.log,
+            on_stats=lambda st: setattr(self, "_group_chat_stats", st),
+        )
+
+        def run_async() -> None:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(
+                    self.group_chat_engine.run(
+                        account_ids=list(account_ids),
+                        chat_id=int(chat_id),
+                        topic=topic,
+                        role_overrides=role_overrides or {},
+                        activity_weights=activity_weights or {},
+                        extra_context=extra_context,
+                        chat_title=chat_title,
+                    )
+                )
+            finally:
+                loop.close()
+                with self._lock:
+                    self._group_chat_running = False
+                    self._group_chat_account_ids = set()
+                self.log("■ Групповой чат завершён")
+
+        self.group_chat_thread = threading.Thread(target=run_async, daemon=True)
+        self.group_chat_thread.start()
+        self.log(f"▶ Групповой чат: {', '.join(account_ids)} → {chat_title or chat_id}")
+        return True, "OK"
+
+    def stop_group_chat(self) -> None:
+        if self.group_chat_engine:
+            self.group_chat_engine.stop()
+            self.log("■ Останавливаем групповой чат...")

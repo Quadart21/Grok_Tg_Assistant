@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from core.api.routes import accounts, agents, config, dialogs, engine, proxies, system
+from core.api.routes import accounts, agents, config, dialogs, engine, group_chat, proxies, system
 from core.app_service import AppService
 
 
@@ -16,3 +16,4 @@ def register_api_routes(app: FastAPI, service: AppService) -> None:
     dialogs.register(app, service)
     engine.register(app, service)
     agents.register(app, service)
+    group_chat.register(app, service)

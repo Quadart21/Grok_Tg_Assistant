@@ -264,6 +264,89 @@ class TelegramAccountClient:
             "username": me.username or "",
         }
 
+    @property
+    def my_user_id(self) -> int | None:
+        return self._my_id
+
+    async def list_group_dialogs(self, limit: int = 200) -> list[dict]:
+        """Список групп и супергрупп, в которых состоит аккаунт."""
+        if not self._client:
+            raise RuntimeError("Клиент не подключён")
+        result: list[dict] = []
+        async for dialog in self._client.iter_dialogs(limit=limit):
+            entity = dialog.entity
+            is_group = bool(getattr(dialog, "is_group", False))
+            is_channel = bool(getattr(dialog, "is_channel", False))
+            megagroup = bool(getattr(entity, "megagroup", False))
+            # Обычные чаты, супергруппы; каналы-вещалки без обсуждений пропускаем
+            if not (is_group or megagroup):
+                if is_channel and not megagroup:
+                    continue
+                if not is_group:
+                    continue
+            chat_id = int(dialog.id)
+            title = dialog.name or getattr(entity, "title", None) or str(chat_id)
+            username = getattr(entity, "username", None) or ""
+            kind = "supergroup" if megagroup or (is_channel and megagroup) else "group"
+            if is_channel and megagroup:
+                kind = "supergroup"
+            result.append(
+                {
+                    "chat_id": chat_id,
+                    "title": title,
+                    "username": username,
+                    "kind": kind,
+                    "participants_count": getattr(entity, "participants_count", None),
+                }
+            )
+        return result
+
+    async def send_message_to_chat(self, chat_id: int, text: str) -> int:
+        if not self._client:
+            raise RuntimeError("Клиент не подключён")
+        entity = await self._client.get_entity(chat_id)
+        msg = await self._client.send_message(entity, text)
+        return msg.id
+
+    async def show_typing_in_chat(self, chat_id: int, seconds: float = 2.0) -> None:
+        if not self._client or seconds <= 0:
+            return
+        entity = await self._client.get_entity(chat_id)
+        async with self._client.action(entity, "typing"):
+            await asyncio.sleep(seconds)
+
+    async def get_chat_history(self, chat_id: int, limit: int = 40) -> list[dict]:
+        """История чата: от старых к новым."""
+        if not self._client:
+            raise RuntimeError("Клиент не подключён")
+        entity = await self._client.get_entity(chat_id)
+        messages = await self._client.get_messages(entity, limit=limit)
+        result: list[dict] = []
+        for msg in reversed(messages):
+            text = (msg.message or "").strip()
+            if not text:
+                continue
+            sender = await msg.get_sender()
+            sender_id = getattr(sender, "id", None) or 0
+            sender_name = ""
+            if sender:
+                sender_name = (
+                    getattr(sender, "username", None)
+                    or getattr(sender, "first_name", None)
+                    or f"id_{sender_id}"
+                )
+            result.append(
+                {
+                    "msg_id": msg.id,
+                    "sender_id": int(sender_id),
+                    "sender_name": str(sender_name),
+                    "text": text,
+                    "out": bool(msg.out),
+                    "date": msg.date.isoformat() if msg.date else "",
+                }
+            )
+        return result
+
     async def _resolve_session_path(self) -> Path:
         if self.session.format == SessionFormat.TELEthon:
             return self.session.path

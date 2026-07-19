@@ -2,6 +2,7 @@
 (function () {
   const P = window.Panel = window.Panel || {};
 
+
 P.loadRoles = async function() {
   const r = await P.api("/api/roles");
   P.$("#defaultRole").value = r.default_role || "";
@@ -467,6 +468,225 @@ P.$("#btnStopAgents").onclick = async () => {
   P.loadAgents();
 };
 
+P.GROUP_CHAT_SETTING_FIELDS = [
+  "use_schedule", "resume_next_day", "online_probability",
+  "quiet_break_min_min", "quiet_break_max_min", "quiet_break_chance",
+  "max_messages_per_account_session", "max_messages_per_account_hour",
+  "max_messages_per_account_day", "max_messages_group_day",
+  "burst_min", "burst_max", "max_consecutive_same_speaker",
+  "delay_between_speakers_min_sec", "delay_between_speakers_max_sec",
+  "delay_within_burst_min_sec", "delay_within_burst_max_sec",
+  "read_and_wait_chance", "read_and_wait_min_sec", "read_and_wait_max_sec",
+  "short_reply_chance", "reply_style", "language", "temperature", "max_tokens",
+  "history_limit", "split_long_messages", "split_at_chars", "split_parts_max",
+];
+
+P.renderGroupChatAccounts = function() {
+  const tbody = P.$("#groupChatAccountsTable");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  const rows = (P.state.accountsCache || []).filter((a) => a.is_active !== false);
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="hint">Нет аккаунтов — добавьте сессии</td></tr>';
+    return;
+  }
+  rows.forEach((a) => {
+    const role = P.state.roleAssignments[a.id] || "—";
+    const checked = P.state.selectedGroupChatAccounts.has(a.id) ? "checked" : "";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input type="checkbox" data-gc-id="${P.escapeHtml(a.id)}" ${checked}></td>
+      <td><strong>${P.escapeHtml(a.id)}</strong></td>
+      <td><span class="chip">${P.escapeHtml(role)}</span></td>
+      <td><input type="number" class="gc-weight" data-gc-id="${P.escapeHtml(a.id)}" value="1" min="0.1" step="0.1" style="width:4.5rem"></td>`;
+    tbody.appendChild(tr);
+    tr.querySelector("input[type=checkbox]").onchange = (ev) => {
+      if (ev.target.checked) P.state.selectedGroupChatAccounts.add(a.id);
+      else P.state.selectedGroupChatAccounts.delete(a.id);
+      P.renderGroupChatRoleOverrides();
+    };
+  });
+  P.renderGroupChatRoleOverrides();
+}
+
+P.renderGroupChatRoleOverrides = function() {
+  const box = P.$("#groupChatRolesBox");
+  if (!box) return;
+  const ids = [...P.state.selectedGroupChatAccounts];
+  if (ids.length < 2) {
+    box.innerHTML = '<p class="hint">Выберите минимум 2 аккаунта, чтобы задать роли.</p>';
+    return;
+  }
+  box.innerHTML = ids.map((id) => {
+    const group = P.state.roleAssignments[id] || "";
+    const g = (P.state.roleGroupsData || []).find((x) => x.name === group);
+    const prompt = g?.role_prompt || "";
+    return `
+      <div class="card" style="margin:0.75rem 0;padding:0.75rem" data-gc-role="${P.escapeHtml(id)}">
+        <strong>${P.escapeHtml(id)}</strong>
+        <label class="label">Имя роли</label>
+        <input type="text" class="gc-role-name" value="${P.escapeHtml(group || "участник")}">
+        <label class="label">Промпт роли (можно переопределить)</label>
+        <textarea class="gc-role-prompt" rows="3">${P.escapeHtml(prompt)}</textarea>
+      </div>`;
+  }).join("");
+}
+
+P.loadGroupChatSettings = async function() {
+  const s = await P.api("/api/group-chat/settings");
+  P.GROUP_CHAT_SETTING_FIELDS.forEach((key) => {
+    const el = P.$(`#gc_${key}`);
+    if (!el) return;
+    if (el.type === "checkbox") el.checked = !!s[key];
+    else el.value = s[key] ?? "";
+  });
+  const tz = P.$("#gc_timezone_offset_hours");
+  if (tz) tz.value = s.timezone_offset_hours == null ? "" : s.timezone_offset_hours;
+  const win = P.$("#gc_activity_windows");
+  if (win) win.value = JSON.stringify(s.activity_windows || [], null, 2);
+  const stop = P.$("#gc_stop_keywords");
+  if (stop) stop.value = Array.isArray(s.stop_keywords) ? s.stop_keywords.join(", ") : "";
+}
+
+P.saveGroupChatSettings = async function() {
+  const payload = {};
+  P.GROUP_CHAT_SETTING_FIELDS.forEach((key) => {
+    const el = P.$(`#gc_${key}`);
+    if (!el) return;
+    if (el.type === "checkbox") payload[key] = el.checked;
+    else if (el.type === "number") payload[key] = el.value === "" ? 0 : Number(el.value);
+    else payload[key] = el.value;
+  });
+  const tz = P.$("#gc_timezone_offset_hours").value;
+  payload.timezone_offset_hours = tz === "" ? null : Number(tz);
+  try {
+    payload.activity_windows = JSON.parse(P.$("#gc_activity_windows").value || "[]");
+  } catch (_) {
+    P.$("#groupChatSettingsMsg").textContent = "Ошибка JSON в окнах активности";
+    return;
+  }
+  payload.stop_keywords = P.$("#gc_stop_keywords").value.split(",").map((x) => x.trim()).filter(Boolean);
+  try {
+    await P.api("/api/group-chat/settings", { method: "POST", body: JSON.stringify(payload) });
+    P.$("#groupChatSettingsMsg").textContent = "Настройки сохранены";
+  } catch (e) {
+    P.$("#groupChatSettingsMsg").textContent = e.message;
+  }
+}
+
+P.findCommonGroupChats = async function() {
+  const ids = [...P.state.selectedGroupChatAccounts];
+  if (ids.length < 2) return alert("Выберите минимум 2 аккаунта");
+  P.$("#groupChatMsg").textContent = "Ищем общие чаты...";
+  try {
+    const data = await P.api("/api/group-chat/common-chats", {
+      method: "POST",
+      body: JSON.stringify({ account_ids: ids }),
+    });
+    P.state.groupChatCommonCache = data.chats || [];
+    const sel = P.$("#groupChatSelect");
+    if (!P.state.groupChatCommonCache.length) {
+      sel.innerHTML = '<option value="">— общих чатов нет —</option>';
+      P.$("#groupChatMsg").textContent = "Общих групп не найдено";
+      return;
+    }
+    sel.innerHTML = P.state.groupChatCommonCache.map((c) =>
+      `<option value="${c.chat_id}">${P.escapeHtml(c.title)} (${c.kind}, ${c.chat_id})</option>`
+    ).join("");
+    P.$("#groupChatMsg").textContent = `Найдено: ${P.state.groupChatCommonCache.length}`;
+  } catch (e) {
+    P.$("#groupChatMsg").textContent = e.message;
+    alert(e.message);
+  }
+}
+
+P.refreshGroupChatStatus = async function() {
+  const st = await P.api("/api/group-chat/status");
+  const chip = P.$("#groupChatStats");
+  if (chip) {
+    if (st.running) {
+      chip.className = "chip ok";
+      chip.textContent = st.paused_schedule ? "Пауза (расписание)" : "Онлайн";
+    } else {
+      chip.className = "chip muted";
+      chip.textContent = "Остановлен";
+    }
+  }
+  const live = P.$("#groupChatLiveStats");
+  if (live) {
+    live.textContent = st.running
+      ? `${st.status_text || "работает"} · отправлено: ${st.messages_sent} · день: ${st.group_day_count}`
+      : (st.status_text || "Ожидание запуска");
+  }
+  const log = P.$("#groupChatLog");
+  if (log && Array.isArray(st.recent_messages)) {
+    log.textContent = st.recent_messages.map((m) =>
+      `${m.speaker_name || m.speaker_account_id}: ${m.text}`
+    ).join("\n");
+  }
+}
+
+P.startGroupChat = async function() {
+  const ids = [...P.state.selectedGroupChatAccounts];
+  if (ids.length < 2) return alert("Выберите минимум 2 аккаунта");
+  const chatId = Number(P.$("#groupChatSelect").value || 0);
+  if (!chatId) return alert("Выберите общий чат");
+  const topic = P.$("#groupChatTopic").value.trim();
+  if (!topic) return alert("Укажите тему");
+  const chat = P.state.groupChatCommonCache.find((c) => Number(c.chat_id) === chatId);
+  const role_overrides = {};
+  const activity_weights = {};
+  ids.forEach((id) => {
+    const weightEl = document.querySelector(`.gc-weight[data-gc-id="${CSS.escape(id)}"]`);
+    activity_weights[id] = weightEl ? Number(weightEl.value || 1) : 1;
+    const box = document.querySelector(`[data-gc-role="${CSS.escape(id)}"]`);
+    if (box) {
+      role_overrides[id] = {
+        role_name: box.querySelector(".gc-role-name")?.value || "",
+        role_prompt: box.querySelector(".gc-role-prompt")?.value || "",
+      };
+    }
+  });
+  try {
+    await P.saveGroupChatSettings();
+    await P.api("/api/group-chat/start", {
+      method: "POST",
+      body: JSON.stringify({
+        account_ids: ids,
+        chat_id: chatId,
+        chat_title: chat?.title || "",
+        topic,
+        extra_context: P.$("#groupChatExtra").value,
+        role_overrides,
+        activity_weights,
+      }),
+    });
+    P.$("#groupChatMsg").textContent = "Запущено";
+    P.refreshStatus();
+    P.refreshGroupChatStatus();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+P.stopGroupChat = async function() {
+  await P.api("/api/group-chat/stop", { method: "POST" });
+  P.refreshStatus();
+  P.refreshGroupChatStatus();
+}
+
+P.loadGroupChat = async function() {
+  P.renderGroupChatAccounts();
+  await P.loadGroupChatSettings();
+  await P.refreshGroupChatStatus();
+}
+
+P.$("#btnFindCommonChats").onclick = P.findCommonGroupChats;
+P.$("#btnSaveGroupChatSettings").onclick = P.saveGroupChatSettings;
+P.$("#btnStartGroupChat").onclick = P.startGroupChat;
+P.$("#btnStopGroupChat").onclick = P.stopGroupChat;
+P.$("#btnRefreshGroupChat").onclick = () => { P.renderGroupChatAccounts(); P.refreshGroupChatStatus(); };
+
 P.startEngine = async function(resumeOnly) {
   try {
     let accountIds = P.state.selectedForRun.size ? [...P.state.selectedForRun] : [];
@@ -497,6 +717,5 @@ P.startEngine = async function(resumeOnly) {
 P.$("#btnStart").onclick = () => P.startEngine(false);
 P.$("#btnResume").onclick = () => P.startEngine(true);
 P.$("#btnStop").onclick = async () => { await P.api("/api/engine/stop", { method: "POST" }); P.refreshStatus(); };
-
 
 })();

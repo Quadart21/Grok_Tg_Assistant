@@ -71,6 +71,7 @@ P.loadAccounts = async function() {
   });
   P.purgeIneligibleSelection();
   P.updateAccountsSelectionUi();
+  try { P.renderGroupChatAccounts(); } catch (_) {}
 }
 
 P.purgeIneligibleSelection = function() {
@@ -389,41 +390,5 @@ P.$("#profileGenerateMode")?.addEventListener("change", P.syncProfileModeUi);
 P.$("#btnProfilePreview")?.addEventListener("click", P.previewProfileGeneration);
 P.$("#btnBulkProfile")?.addEventListener("click", P.bulkUpdateProfile);
 P.syncProfileModeUi();
-
-P.$("#btnSaveProxy").onclick = async () => {
-  if (!P.state.selectedAccount) return alert("Выберите аккаунт");
-  try {
-    await P.api(`/api/accounts/${encodeURIComponent(P.state.selectedAccount)}/proxy`, {
-      method: "POST",
-      body: JSON.stringify({
-        type: P.$("#proxyType").value,
-        host: P.$("#proxyHost").value,
-        port: parseInt(P.$("#proxyPort").value) || 0,
-        username: P.$("#proxyUser").value,
-        password: P.$("#proxyPass").value,
-      }),
-    });
-    await P.loadProxyPool();
-    P.loadAccounts();
-    P.refreshStatus();
-    alert("Прокси добавлен в пул и привязан");
-  } catch (e) { alert(e.message); }
-};
-
-P.$("#btnBindProxy").onclick = async () => {
-  if (!P.state.selectedAccount) return;
-  try {
-    await P.bindAccountProxy(P.state.selectedAccount, P.$("#proxyPoolSelect").value || null);
-  } catch (e) { alert(e.message); }
-};
-
-P.$("#btnClearProxy").onclick = async () => {
-  if (!P.state.selectedAccount) return;
-  try {
-    await P.bindAccountProxy(P.state.selectedAccount, null);
-    P.fillProxyPoolSelect("");
-  } catch (e) { alert(e.message); }
-};
-
 
 })();

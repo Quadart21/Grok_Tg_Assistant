@@ -3,13 +3,13 @@ from __future__ import annotations
 import httpx
 
 from core.dialog_settings import DialogSettings
-from core.llm_providers import OPENAI_COMPAT_URLS, provider_info
+from core.llm_providers import chat_completions_url, provider_info
 from core.master_prompt import MasterPromptConfig
 from core.state_store import ChatMessage
 
 
 class LLMClient:
-    """Генерация текста через Grok, OpenAI, Gemini, Claude, DeepSeek, OpenRouter."""
+    """Генерация текста через Grok, OpenAI, Gemini, Claude, DeepSeek, OpenRouter, Local."""
 
     def __init__(
         self,
@@ -18,6 +18,7 @@ class LLMClient:
         model: str,
         settings: DialogSettings | None = None,
         master_prompt: MasterPromptConfig | None = None,
+        base_url: str = "",
     ) -> None:
         self.provider = provider
         self.api_key = (api_key or "").strip()
@@ -25,6 +26,7 @@ class LLMClient:
         self.settings = settings or DialogSettings()
         self.master = master_prompt or MasterPromptConfig()
         self._info = provider_info(provider)
+        self.base_url = (base_url or "").strip()
 
     @property
     def provider_name(self) -> str:
@@ -148,17 +150,91 @@ class LLMClient:
             )
         return await self._complete(system, messages)
 
-    async def _complete(self, system: str, messages: list[dict]) -> str:
+    async def generate_group_message(
+        self,
+        role_prompt: str,
+        topic: str,
+        transcript: list[dict],
+        speaker_label: str,
+        participants: list[str],
+        language: str = "ru",
+        extra_context: str = "",
+        short_reply: bool = False,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Реплика аккаунта в общем чате по теме и роли."""
+        extra = self._build_extra(extra_context)
+        style_hint = (
+            "Напиши короткую реплику (1 фраза или 1–2 коротких предложения)."
+            if short_reply
+            else "Напиши естественную реплику средней длины, как в живом чате."
+        )
+        others = ", ".join(p for p in participants if p != speaker_label) or "другие участники"
+        system = (
+            f"{self._layered_prompt(role_prompt, 'Роль в чате')}\n\n"
+            "Режим: вы участник группового Telegram-чата. Пишете от своего имени.\n"
+            "Правила:\n"
+            "- Не упоминайте, что вы бот, ИИ, скрипт или автоматизация.\n"
+            "- Не копируйте чужие формулировки дословно.\n"
+            "- Учитывайте тему и последние сообщения.\n"
+            "- Можно соглашаться, спорить мягко, шутить, задавать вопросы — по роли.\n"
+            "- Не здоровайтесь заново, если диалог уже идёт.\n"
+            "- Только текст одного сообщения, без кавычек и пояснений.\n"
+            f"- {style_hint}"
+        )
+        if topic.strip():
+            system += f"\n\nТема разговора: {topic.strip()}"
+        if extra:
+            system += f"\n\n{extra}"
+
+        limit = self.settings.history_for_grok
+        lines: list[str] = []
+        for item in transcript[-limit:]:
+            name = item.get("speaker_name") or item.get("speaker") or "?"
+            text = (item.get("text") or item.get("content") or "").strip()
+            if text:
+                lines.append(f"{name}: {text}")
+        history_block = "\n".join(lines) if lines else "(чат пока пустой или тихий)"
+
+        user = (
+            f"Вы пишете как: {speaker_label}\n"
+            f"Другие «свои» участники сценария: {others}\n"
+            f"Язык: {language}\n\n"
+            f"Последние сообщения чата:\n{history_block}\n\n"
+            "Напишите следующую реплику от своего имени."
+        )
+        return await self._complete(
+            system,
+            [{"role": "user", "content": user}],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    async def _complete(
+        self,
+        system: str,
+        messages: list[dict],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
         if not self.api_key:
             raise RuntimeError(f"Не указан API-ключ для {self._info.name}")
+        temp = self.settings.grok_temperature if temperature is None else temperature
+        tokens = self.settings.grok_max_tokens if max_tokens is None else max_tokens
         if self._info.api_style == "anthropic":
-            return await self._complete_anthropic(system, messages)
-        return await self._complete_openai(system, messages)
+            return await self._complete_anthropic(system, messages, temp, tokens)
+        return await self._complete_openai(system, messages, temp, tokens)
 
-    async def _complete_openai(self, system: str, messages: list[dict]) -> str:
-        url = OPENAI_COMPAT_URLS.get(self.provider)
+    async def _complete_openai(
+        self, system: str, messages: list[dict], temperature: float, max_tokens: int
+    ) -> str:
+        url = chat_completions_url(self.provider, self.base_url)
         if not url:
-            raise RuntimeError(f"Провайдер {self.provider} не поддерживается")
+            raise RuntimeError(
+                f"Провайдер {self.provider} не поддерживается"
+                + (" — укажите Local Base URL" if self.provider == "local" else "")
+            )
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -168,16 +244,17 @@ class LLMClient:
             headers["HTTP-Referer"] = "http://127.0.0.1:8787"
             headers["X-Title"] = "tg-grok-outreach"
 
+        timeout = 300.0 if self.provider == "local" else 90.0
         payload_messages = [{"role": "system", "content": system}, *messages]
-        async with httpx.AsyncClient(timeout=90.0) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 url,
                 headers=headers,
                 json={
                     "model": self.model,
                     "messages": payload_messages,
-                    "temperature": self.settings.grok_temperature,
-                    "max_tokens": self.settings.grok_max_tokens,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
                 },
             )
             if response.status_code >= 400:
@@ -187,7 +264,9 @@ class LLMClient:
             content = data["choices"][0]["message"]["content"].strip()
             return self._strip_quotes(content)
 
-    async def _complete_anthropic(self, system: str, messages: list[dict]) -> str:
+    async def _complete_anthropic(
+        self, system: str, messages: list[dict], temperature: float, max_tokens: int
+    ) -> str:
         anthropic_messages = [
             {"role": m["role"], "content": m["content"]}
             for m in messages
@@ -203,10 +282,10 @@ class LLMClient:
                 },
                 json={
                     "model": self.model,
-                    "max_tokens": self.settings.grok_max_tokens,
+                    "max_tokens": max_tokens,
                     "system": system,
                     "messages": anthropic_messages,
-                    "temperature": self.settings.grok_temperature,
+                    "temperature": temperature,
                 },
             )
             if response.status_code >= 400:
@@ -235,4 +314,5 @@ def create_llm_client(
         model=config.get_llm_model(),
         settings=settings,
         master_prompt=master_prompt,
+        base_url=getattr(config, "local_base_url", "") or "",
     )

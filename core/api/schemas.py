@@ -17,6 +17,8 @@ class ConfigBody(BaseModel):
     anthropic_api_key: str = ""
     deepseek_api_key: str = ""
     openrouter_api_key: str = ""
+    local_api_key: str = ""
+    local_base_url: str = "http://127.0.0.1:8000/v1"
     delay_between_messages_sec: int = 30
     max_concurrent_accounts: int = 5
     message_language: str = "ru"
@@ -157,3 +159,61 @@ class ConvertSessionsBody(BaseModel):
 
 class AgentStartBody(BaseModel):
     account_ids: list[str] = []
+
+
+class GroupChatAccountsBody(BaseModel):
+    account_ids: list[str] = []
+
+
+class GroupChatRoleOverride(BaseModel):
+    role_name: str = ""
+    role_prompt: str = ""
+
+
+class GroupChatStartBody(BaseModel):
+    account_ids: list[str] = []
+    chat_id: int = 0
+    chat_title: str = ""
+    topic: str = ""
+    extra_context: str = ""
+    role_overrides: dict[str, GroupChatRoleOverride] = {}
+    activity_weights: dict[str, float] = {}
+
+
+class GroupChatSettingsBody(BaseModel):
+    use_schedule: bool = True
+    timezone_offset_hours: float | None = None
+    activity_windows: list[dict] = []
+    online_probability: float = 0.55
+    quiet_break_min_min: int = 15
+    quiet_break_max_min: int = 90
+    quiet_break_chance: float = 0.12
+    resume_next_day: bool = True
+    max_messages_per_account_session: int = 40
+    max_messages_per_account_hour: int = 12
+    max_messages_per_account_day: int = 30
+    max_messages_group_day: int = 80
+    burst_min: int = 1
+    burst_max: int = 3
+    max_consecutive_same_speaker: int = 3
+    delay_between_speakers_min_sec: int = 25
+    delay_between_speakers_max_sec: int = 120
+    delay_within_burst_min_sec: int = 3
+    delay_within_burst_max_sec: int = 12
+    typing_base_sec: float = 1.5
+    typing_per_char_sec: float = 0.04
+    typing_max_sec: float = 8.0
+    read_and_wait_chance: float = 0.25
+    read_and_wait_min_sec: int = 20
+    read_and_wait_max_sec: int = 90
+    short_reply_chance: float = 0.35
+    split_long_messages: bool = True
+    split_at_chars: int = 280
+    split_parts_max: int = 3
+    language: str = "ru"
+    history_limit: int = 40
+    temperature: float = 0.9
+    max_tokens: int = 250
+    reply_style: str = "mixed"
+    stop_keywords: list[str] | str = []
+    sync_history_every_sec: int = 45

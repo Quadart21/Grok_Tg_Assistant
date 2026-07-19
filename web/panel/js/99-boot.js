@@ -11,6 +11,7 @@
   P.loadDialogSettings();
   P.loadDialogs();
   P.loadAgents();
+  P.loadGroupChat();
   P.refreshStatus();
   setInterval(async () => {
     await P.refreshStatus();

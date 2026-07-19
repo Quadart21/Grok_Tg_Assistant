@@ -1,6 +1,6 @@
 # Grok TG Assistant
 
-[![Version](https://img.shields.io/badge/version-1.0.0-22d3ee?style=for-the-badge)](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.0.0)
+[![Version](https://img.shields.io/badge/version-1.1.0-22d3ee?style=for-the-badge)](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.1.0)
 [![Python](https://img.shields.io/badge/python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-a78bfa?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-34d399?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Quadart21/Grok_Tg_Assistant)
@@ -21,8 +21,9 @@
 | **Стиль** | Мастер-промпт, роли, назначение на аккаунты |
 | **Переписки** | Память диалогов, лимиты, стоп-слова |
 | **AI Агент** | Личный секретарь на отдельном аккаунте (вне рассылки) |
+| **Групповой чат** | Свои аккаунты общаются в общем чате по теме/ролям, с расписанием и «живостью» |
 
-**LLM:** Grok (xAI), OpenAI, Gemini, Claude, DeepSeek, OpenRouter.
+**LLM:** Grok (xAI), OpenAI, Gemini, Claude, DeepSeek, OpenRouter, **Local** (llama.cpp / OpenAI-compatible).
 
 ---
 
@@ -31,38 +32,32 @@
 ### Требования
 
 - Windows 10/11
-- Python 3.10+
-- Аккаунт Telegram и ключи на [my.telegram.org/apps](https://my.telegram.org/apps)
+- **Python 3.10+** (панель)
+- **Python 3.10–3.12** — только если нужна конвертация **tdata → .session**
+- Ключи Telegram: [my.telegram.org/apps](https://my.telegram.org/apps)
 
-### Установка
+### Установка Python (если нет 3.11)
 
-```bash
-git clone https://github.com/Quadart21/Grok_Tg_Assistant.git
-cd Grok_Tg_Assistant
-python -m venv venv
-venv\Scripts\activate
-python -m pip install -r requirements.txt
+**Способ 1 — winget (без браузера):**
+```bat
+winget install Python.Python.3.11
 ```
+или запустите `install_python.bat` в папке проекта.
 
-Скопируйте примеры конфигов (если файлов ещё нет):
+**Способ 2 — прямая ссылка на установщик:**
+https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe
 
-```bash
-copy config\settings.example.json config\settings.json
-copy config\proxy_pool.example.json config\proxy_pool.json
-copy roles.example.json roles.json
-```
+При установке отметьте **«Add python.exe to PATH»**.
+
+**Если стоит только Python 3.13+** — панель всё равно запустится (`start.bat`), но конвертер tdata будет отключён.
 
 ### Запуск
 
-```bash
+```bat
 start.bat
 ```
 
-или
-
-```bash
-python main.py
-```
+`start.bat` сам выберет Python 3.11 → 3.12 → 3.10, при отсутствии попробует winget, иначе возьмёт 3.13+ в режиме «только панель».
 
 Откроется браузер: **http://127.0.0.1:8787/**
 
@@ -89,6 +84,7 @@ Grok_Tg_Assistant/
 
 | Версия | Дата | Описание |
 |--------|------|----------|
+| [**v1.1.0**](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.1.0) | 19.07.2026 | Групповой чат аккаунтов + Local LLM (llama.cpp) |
 | [**v1.0.0**](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.0.0) | 02.07.2026 | Первый публичный релиз |
 
 Подробности — в [CHANGELOG.md](CHANGELOG.md).

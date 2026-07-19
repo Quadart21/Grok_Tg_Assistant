@@ -9,6 +9,8 @@ let selectedProxies = new Set();
 let proxyViewFilters = new Set();
 let proxyFiltersInited = false;
 let selectedAgents = new Set();
+let selectedGroupChatAccounts = new Set();
+let groupChatCommonCache = [];
 let logOffset = 0;
 
 function escapeHtml(s) {
@@ -51,10 +53,12 @@ async function refreshStatus() {
   $("#statusBar").textContent = parts.join(" · ");
   $("#sessionsPath").textContent = s.sessions_path;
   const badge = $("#runBadge");
-  const running = s.running || s.agent_running;
-  if (s.running && s.agent_running) badge.textContent = "рассылка + секретарь";
+  const running = s.running || s.agent_running || s.group_chat_running;
+  if (s.group_chat_running && (s.running || s.agent_running)) badge.textContent = "несколько режимов";
+  else if (s.running && s.agent_running) badge.textContent = "рассылка + секретарь";
   else if (s.running) badge.textContent = "рассылка";
   else if (s.agent_running) badge.textContent = "секретарь";
+  else if (s.group_chat_running) badge.textContent = "групповой чат";
   else badge.textContent = "остановлено";
   badge.classList.toggle("running", running);
   $("#btnStop").disabled = !s.running;
@@ -62,6 +66,10 @@ async function refreshStatus() {
   $("#btnResume").disabled = s.running;
   $("#btnStopAgents").disabled = !s.agent_running;
   $("#btnStartAgents").disabled = s.agent_running;
+  const btnStopGc = $("#btnStopGroupChat");
+  const btnStartGc = $("#btnStartGroupChat");
+  if (btnStopGc) btnStopGc.disabled = !s.group_chat_running;
+  if (btnStartGc) btnStartGc.disabled = !!s.group_chat_running;
 }
 
 async function refreshEngine() {
@@ -73,14 +81,18 @@ async function refreshEngine() {
   try {
     const a = await api("/api/agents/stats");
     const el = $("#agentStats");
-    if (!el) return;
-    if (a.running) {
-      el.className = "chip ok";
-      el.textContent = `Онлайн: ${a.active_accounts} · Диалогов: ${a.active_dialogs} · Ответов: ${a.replies_sent}`;
-    } else {
-      el.className = "chip muted";
-      el.textContent = "Остановлен";
+    if (el) {
+      if (a.running) {
+        el.className = "chip ok";
+        el.textContent = `Онлайн: ${a.active_accounts} · Диалогов: ${a.active_dialogs} · Ответов: ${a.replies_sent}`;
+      } else {
+        el.className = "chip muted";
+        el.textContent = "Остановлен";
+      }
     }
+  } catch (_) {}
+  try {
+    await refreshGroupChatStatus();
   } catch (_) {}
 }
 
@@ -132,6 +144,12 @@ async function loadLlmProviders() {
   };
 }
 
+function syncLocalLlmUi() {
+  const isLocal = $("#llmProvider").value === "local";
+  const box = $("#localLlmBox");
+  if (box) box.classList.toggle("hidden", !isLocal);
+}
+
 async function loadConfig() {
   if (!llmProviders.length) await loadLlmProviders();
   const c = await api("/api/config");
@@ -145,6 +163,9 @@ async function loadConfig() {
   $("#anthropicKey").value = c.anthropic_api_key || "";
   $("#deepseekKey").value = c.deepseek_api_key || "";
   $("#openrouterKey").value = c.openrouter_api_key || "";
+  $("#localKey").value = c.local_api_key || "";
+  $("#localBaseUrl").value = c.local_base_url || "http://127.0.0.1:8000/v1";
+  syncLocalLlmUi();
   const savedModel = c.llm_model || c.grok_model || "grok-3-mini";
   await loadLlmModels(c.llm_provider || "grok", savedModel);
   $("#delayMsg").value = c.delay_between_messages_sec;
@@ -155,8 +176,41 @@ async function loadConfig() {
   $("#telegram2fa").value = c.telegram_2fa_password || "";
 }
 
+$("#llmProvider")?.addEventListener("change", async () => {
+  syncLocalLlmUi();
+  try {
+    await loadLlmModels($("#llmProvider").value, $("#llmModel").value);
+  } catch (_) {}
+});
+
 $("#btnRefreshModels").onclick = async () => {
   try {
+    if ($("#llmProvider").value === "local") {
+      await api("/api/config", {
+        method: "POST",
+        body: JSON.stringify({
+          telegram_api_id: parseInt($("#apiId").value) || 0,
+          telegram_api_hash: $("#apiHash").value,
+          llm_provider: "local",
+          llm_model: $("#llmModel").value || "mistral-24b-ru-uncensored",
+          grok_api_key: $("#grokKey").value,
+          grok_model: $("#grokModel").value || "grok-3-mini",
+          openai_api_key: $("#openaiKey").value,
+          gemini_api_key: $("#geminiKey").value,
+          anthropic_api_key: $("#anthropicKey").value,
+          deepseek_api_key: $("#deepseekKey").value,
+          openrouter_api_key: $("#openrouterKey").value,
+          local_api_key: $("#localKey").value,
+          local_base_url: $("#localBaseUrl").value,
+          delay_between_messages_sec: parseInt($("#delayMsg").value) || 30,
+          max_concurrent_accounts: parseInt($("#concurrent").value) || 5,
+          reply_delay_min_sec: parseInt($("#replyMin").value) || 5,
+          reply_delay_max_sec: parseInt($("#replyMax").value) || 25,
+          message_language: $("#language").value || "ru",
+          telegram_2fa_password: $("#telegram2fa").value || "",
+        }),
+      });
+    }
     await loadLlmModels($("#llmProvider").value, $("#llmModel").value);
     $("#configMsg").textContent = "Список моделей обновлён";
   } catch (e) {
@@ -180,6 +234,8 @@ $("#btnSaveConfig").addEventListener("click", async () => {
         anthropic_api_key: $("#anthropicKey").value,
         deepseek_api_key: $("#deepseekKey").value,
         openrouter_api_key: $("#openrouterKey").value,
+        local_api_key: $("#localKey").value,
+        local_base_url: $("#localBaseUrl").value,
         delay_between_messages_sec: parseInt($("#delayMsg").value) || 30,
         max_concurrent_accounts: parseInt($("#concurrent").value) || 5,
         message_language: $("#language").value,
@@ -488,6 +544,7 @@ async function loadAccounts() {
   });
   purgeIneligibleSelection();
   updateAccountsSelectionUi();
+  try { renderGroupChatAccounts(); } catch (_) {}
 }
 
 function purgeIneligibleSelection() {
@@ -1470,6 +1527,225 @@ $("#btnStopAgents").onclick = async () => {
   loadAgents();
 };
 
+const GROUP_CHAT_SETTING_FIELDS = [
+  "use_schedule", "resume_next_day", "online_probability",
+  "quiet_break_min_min", "quiet_break_max_min", "quiet_break_chance",
+  "max_messages_per_account_session", "max_messages_per_account_hour",
+  "max_messages_per_account_day", "max_messages_group_day",
+  "burst_min", "burst_max", "max_consecutive_same_speaker",
+  "delay_between_speakers_min_sec", "delay_between_speakers_max_sec",
+  "delay_within_burst_min_sec", "delay_within_burst_max_sec",
+  "read_and_wait_chance", "read_and_wait_min_sec", "read_and_wait_max_sec",
+  "short_reply_chance", "reply_style", "language", "temperature", "max_tokens",
+  "history_limit", "split_long_messages", "split_at_chars", "split_parts_max",
+];
+
+function renderGroupChatAccounts() {
+  const tbody = $("#groupChatAccountsTable");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  const rows = (accountsCache || []).filter((a) => a.is_active !== false);
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="hint">Нет аккаунтов — добавьте сессии</td></tr>';
+    return;
+  }
+  rows.forEach((a) => {
+    const role = roleAssignments[a.id] || "—";
+    const checked = selectedGroupChatAccounts.has(a.id) ? "checked" : "";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input type="checkbox" data-gc-id="${escapeHtml(a.id)}" ${checked}></td>
+      <td><strong>${escapeHtml(a.id)}</strong></td>
+      <td><span class="chip">${escapeHtml(role)}</span></td>
+      <td><input type="number" class="gc-weight" data-gc-id="${escapeHtml(a.id)}" value="1" min="0.1" step="0.1" style="width:4.5rem"></td>`;
+    tbody.appendChild(tr);
+    tr.querySelector("input[type=checkbox]").onchange = (ev) => {
+      if (ev.target.checked) selectedGroupChatAccounts.add(a.id);
+      else selectedGroupChatAccounts.delete(a.id);
+      renderGroupChatRoleOverrides();
+    };
+  });
+  renderGroupChatRoleOverrides();
+}
+
+function renderGroupChatRoleOverrides() {
+  const box = $("#groupChatRolesBox");
+  if (!box) return;
+  const ids = [...selectedGroupChatAccounts];
+  if (ids.length < 2) {
+    box.innerHTML = '<p class="hint">Выберите минимум 2 аккаунта, чтобы задать роли.</p>';
+    return;
+  }
+  box.innerHTML = ids.map((id) => {
+    const group = roleAssignments[id] || "";
+    const g = (roleGroupsData || []).find((x) => x.name === group);
+    const prompt = g?.role_prompt || "";
+    return `
+      <div class="card" style="margin:0.75rem 0;padding:0.75rem" data-gc-role="${escapeHtml(id)}">
+        <strong>${escapeHtml(id)}</strong>
+        <label class="label">Имя роли</label>
+        <input type="text" class="gc-role-name" value="${escapeHtml(group || "участник")}">
+        <label class="label">Промпт роли (можно переопределить)</label>
+        <textarea class="gc-role-prompt" rows="3">${escapeHtml(prompt)}</textarea>
+      </div>`;
+  }).join("");
+}
+
+async function loadGroupChatSettings() {
+  const s = await api("/api/group-chat/settings");
+  GROUP_CHAT_SETTING_FIELDS.forEach((key) => {
+    const el = $(`#gc_${key}`);
+    if (!el) return;
+    if (el.type === "checkbox") el.checked = !!s[key];
+    else el.value = s[key] ?? "";
+  });
+  const tz = $("#gc_timezone_offset_hours");
+  if (tz) tz.value = s.timezone_offset_hours == null ? "" : s.timezone_offset_hours;
+  const win = $("#gc_activity_windows");
+  if (win) win.value = JSON.stringify(s.activity_windows || [], null, 2);
+  const stop = $("#gc_stop_keywords");
+  if (stop) stop.value = Array.isArray(s.stop_keywords) ? s.stop_keywords.join(", ") : "";
+}
+
+async function saveGroupChatSettings() {
+  const payload = {};
+  GROUP_CHAT_SETTING_FIELDS.forEach((key) => {
+    const el = $(`#gc_${key}`);
+    if (!el) return;
+    if (el.type === "checkbox") payload[key] = el.checked;
+    else if (el.type === "number") payload[key] = el.value === "" ? 0 : Number(el.value);
+    else payload[key] = el.value;
+  });
+  const tz = $("#gc_timezone_offset_hours").value;
+  payload.timezone_offset_hours = tz === "" ? null : Number(tz);
+  try {
+    payload.activity_windows = JSON.parse($("#gc_activity_windows").value || "[]");
+  } catch (_) {
+    $("#groupChatSettingsMsg").textContent = "Ошибка JSON в окнах активности";
+    return;
+  }
+  payload.stop_keywords = $("#gc_stop_keywords").value.split(",").map((x) => x.trim()).filter(Boolean);
+  try {
+    await api("/api/group-chat/settings", { method: "POST", body: JSON.stringify(payload) });
+    $("#groupChatSettingsMsg").textContent = "Настройки сохранены";
+  } catch (e) {
+    $("#groupChatSettingsMsg").textContent = e.message;
+  }
+}
+
+async function findCommonGroupChats() {
+  const ids = [...selectedGroupChatAccounts];
+  if (ids.length < 2) return alert("Выберите минимум 2 аккаунта");
+  $("#groupChatMsg").textContent = "Ищем общие чаты...";
+  try {
+    const data = await api("/api/group-chat/common-chats", {
+      method: "POST",
+      body: JSON.stringify({ account_ids: ids }),
+    });
+    groupChatCommonCache = data.chats || [];
+    const sel = $("#groupChatSelect");
+    if (!groupChatCommonCache.length) {
+      sel.innerHTML = '<option value="">— общих чатов нет —</option>';
+      $("#groupChatMsg").textContent = "Общих групп не найдено";
+      return;
+    }
+    sel.innerHTML = groupChatCommonCache.map((c) =>
+      `<option value="${c.chat_id}">${escapeHtml(c.title)} (${c.kind}, ${c.chat_id})</option>`
+    ).join("");
+    $("#groupChatMsg").textContent = `Найдено: ${groupChatCommonCache.length}`;
+  } catch (e) {
+    $("#groupChatMsg").textContent = e.message;
+    alert(e.message);
+  }
+}
+
+async function refreshGroupChatStatus() {
+  const st = await api("/api/group-chat/status");
+  const chip = $("#groupChatStats");
+  if (chip) {
+    if (st.running) {
+      chip.className = "chip ok";
+      chip.textContent = st.paused_schedule ? "Пауза (расписание)" : "Онлайн";
+    } else {
+      chip.className = "chip muted";
+      chip.textContent = "Остановлен";
+    }
+  }
+  const live = $("#groupChatLiveStats");
+  if (live) {
+    live.textContent = st.running
+      ? `${st.status_text || "работает"} · отправлено: ${st.messages_sent} · день: ${st.group_day_count}`
+      : (st.status_text || "Ожидание запуска");
+  }
+  const log = $("#groupChatLog");
+  if (log && Array.isArray(st.recent_messages)) {
+    log.textContent = st.recent_messages.map((m) =>
+      `${m.speaker_name || m.speaker_account_id}: ${m.text}`
+    ).join("\n");
+  }
+}
+
+async function startGroupChat() {
+  const ids = [...selectedGroupChatAccounts];
+  if (ids.length < 2) return alert("Выберите минимум 2 аккаунта");
+  const chatId = Number($("#groupChatSelect").value || 0);
+  if (!chatId) return alert("Выберите общий чат");
+  const topic = $("#groupChatTopic").value.trim();
+  if (!topic) return alert("Укажите тему");
+  const chat = groupChatCommonCache.find((c) => Number(c.chat_id) === chatId);
+  const role_overrides = {};
+  const activity_weights = {};
+  ids.forEach((id) => {
+    const weightEl = document.querySelector(`.gc-weight[data-gc-id="${CSS.escape(id)}"]`);
+    activity_weights[id] = weightEl ? Number(weightEl.value || 1) : 1;
+    const box = document.querySelector(`[data-gc-role="${CSS.escape(id)}"]`);
+    if (box) {
+      role_overrides[id] = {
+        role_name: box.querySelector(".gc-role-name")?.value || "",
+        role_prompt: box.querySelector(".gc-role-prompt")?.value || "",
+      };
+    }
+  });
+  try {
+    await saveGroupChatSettings();
+    await api("/api/group-chat/start", {
+      method: "POST",
+      body: JSON.stringify({
+        account_ids: ids,
+        chat_id: chatId,
+        chat_title: chat?.title || "",
+        topic,
+        extra_context: $("#groupChatExtra").value,
+        role_overrides,
+        activity_weights,
+      }),
+    });
+    $("#groupChatMsg").textContent = "Запущено";
+    refreshStatus();
+    refreshGroupChatStatus();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function stopGroupChat() {
+  await api("/api/group-chat/stop", { method: "POST" });
+  refreshStatus();
+  refreshGroupChatStatus();
+}
+
+async function loadGroupChat() {
+  renderGroupChatAccounts();
+  await loadGroupChatSettings();
+  await refreshGroupChatStatus();
+}
+
+$("#btnFindCommonChats").onclick = findCommonGroupChats;
+$("#btnSaveGroupChatSettings").onclick = saveGroupChatSettings;
+$("#btnStartGroupChat").onclick = startGroupChat;
+$("#btnStopGroupChat").onclick = stopGroupChat;
+$("#btnRefreshGroupChat").onclick = () => { renderGroupChatAccounts(); refreshGroupChatStatus(); };
+
 async function startEngine(resumeOnly) {
   try {
     let accountIds = selectedForRun.size ? [...selectedForRun] : [];
@@ -1514,5 +1790,6 @@ loadRoles();
 loadDialogSettings();
 loadDialogs();
 loadAgents();
+loadGroupChat();
 refreshStatus();
 setInterval(tick, 1500);
