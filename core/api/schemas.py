@@ -165,6 +165,11 @@ class GroupChatAccountsBody(BaseModel):
     account_ids: list[str] = []
 
 
+class GroupChatJoinLinkBody(BaseModel):
+    account_ids: list[str] = []
+    link: str = ""
+
+
 class GroupChatRoleOverride(BaseModel):
     role_name: str = ""
     role_prompt: str = ""

@@ -2163,6 +2163,63 @@ async function findCommonGroupChats() {
   }
 }
 
+function upsertGroupChatOption(chat) {
+  if (!chat || !chat.chat_id) return;
+  const normalized = {
+    chat_id: Number(chat.chat_id),
+    title: chat.title || `Chat ${chat.chat_id}`,
+    username: chat.username || "",
+    kind: chat.kind || "group",
+    participants_count: chat.participants_count ?? null,
+  };
+  const cached = groupChatCommonCache.find((item) => Number(item.chat_id) === normalized.chat_id);
+  if (cached) {
+    Object.assign(cached, normalized);
+  } else {
+    groupChatCommonCache.unshift(normalized);
+  }
+  const sel = $("#groupChatSelect");
+  if (!sel) return;
+  if (sel.options.length === 1 && !sel.options[0].value) {
+    sel.innerHTML = "";
+  }
+  let option = Array.from(sel.options).find((item) => Number(item.value) === normalized.chat_id);
+  if (!option) {
+    option = document.createElement("option");
+    option.value = String(normalized.chat_id);
+    sel.appendChild(option);
+  }
+  option.textContent = `${normalized.title} (${normalized.kind}, ${normalized.chat_id})`;
+  sel.value = String(normalized.chat_id);
+}
+
+async function joinGroupChatByLink() {
+  const ids = groupChatSelectedAccounts().map((item) => item.id);
+  if (!ids.length) return alert("Выберите минимум 1 аккаунт");
+  const link = $("#groupChatJoinLink")?.value?.trim() || "";
+  if (!link) return alert("Укажите ссылку на чат");
+  $("#groupChatMsg").textContent = "Вступаем в чат...";
+  try {
+    const data = await api("/api/group-chat/join-link", {
+      method: "POST",
+      body: JSON.stringify({ account_ids: ids, link }),
+    });
+    if (data.chat) {
+      upsertGroupChatOption(data.chat);
+      renderGroupChatVenuePreview();
+    }
+    $("#groupChatMsg").textContent = data.message || "Вступление завершено";
+    const failed = (data.results || []).filter((item) => !item.success);
+    if (failed.length) {
+      alert(failed.slice(0, 12).map((item) => `${item.account_id}: ${item.message}`).join("\n"));
+    }
+    await refreshStatus();
+  } catch (e) {
+    $("#groupChatMsg").textContent = e.message;
+    alert(e.message);
+  }
+}
+
 async function refreshGroupChatStatus() {
   const st = await api("/api/group-chat/status");
   applyGroupChatStatus(st);
@@ -2226,6 +2283,7 @@ async function loadGroupChat() {
 }
 
 $("#btnFindCommonChats").onclick = findCommonGroupChats;
+$("#btnGroupChatJoinLink").onclick = joinGroupChatByLink;
 $("#btnSaveGroupChatSettings").onclick = saveGroupChatSettings;
 $("#btnStartGroupChat").onclick = startGroupChat;
 $("#btnStopGroupChat").onclick = stopGroupChat;

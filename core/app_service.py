@@ -1173,6 +1173,82 @@ class AppService:
         finally:
             loop.close()
 
+    def join_group_chat_by_link(self, account_ids: list[str], link: str) -> dict[str, Any]:
+        link = (link or "").strip()
+        if not link:
+            raise ValueError("Укажите ссылку на чат")
+        ordered_ids = list(dict.fromkeys(account_ids or []))
+        if not ordered_ids:
+            raise ValueError("Выберите минимум 1 аккаунт")
+        if not self.config.telegram_api_id or not self.config.telegram_api_hash:
+            raise ValueError("Укажите Telegram API ID и Hash")
+
+        sessions = {s.account_id: s for s in discover_sessions(self.base_dir / self.config.sessions_dir)}
+        proxies = load_proxies(self.proxies_path)
+        global_2fa = self.config.telegram_2fa_password
+
+        async def run_all() -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+            results: list[dict[str, Any]] = []
+            joined_chat: dict[str, Any] | None = None
+            for account_id in ordered_ids:
+                session = sessions.get(account_id)
+                if not session:
+                    results.append(
+                        {
+                            "account_id": account_id,
+                            "success": False,
+                            "message": "Сессия не найдена в папке sessions",
+                        }
+                    )
+                    continue
+
+                proxy = self._proxy_for_account(account_id, proxies)
+                pwd = read_twofa_password(session, global_2fa)
+                client = TelegramAccountClient(
+                    session,
+                    self.config.telegram_api_id,
+                    self.config.telegram_api_hash,
+                    proxy,
+                    pwd,
+                )
+                try:
+                    await client.connect()
+                    chat = await client.join_chat_by_link(link)
+                    joined_chat = joined_chat or chat
+                    results.append(
+                        {
+                            "account_id": account_id,
+                            "success": True,
+                            "message": f"Вступил: {chat['title']}",
+                            "chat": chat,
+                        }
+                    )
+                    self.log(f"✓ {account_id}: вступил в чат {chat['title']}")
+                except Exception as exc:
+                    err = format_telegram_error(exc)
+                    results.append({"account_id": account_id, "success": False, "message": err})
+                    self.log(f"✗ {account_id}: не вступил в чат — {err}")
+                finally:
+                    await client.disconnect()
+            return results, joined_chat
+
+        loop = asyncio.new_event_loop()
+        try:
+            results, joined_chat = loop.run_until_complete(run_all())
+        finally:
+            loop.close()
+
+        success_count = sum(1 for item in results if item["success"])
+        failed_count = len(results) - success_count
+        return {
+            "ok": success_count > 0,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "results": results,
+            "chat": joined_chat,
+            "message": f"Вступление завершено: {success_count} успешно, {failed_count} ошибок",
+        }
+
     def get_group_chat_status(self) -> dict[str, Any]:
         s = self._group_chat_stats
         self.state_store.load()

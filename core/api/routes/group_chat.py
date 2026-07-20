@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
 
-from core.api.schemas import GroupChatAccountsBody, GroupChatSettingsBody, GroupChatStartBody
+from core.api.schemas import (
+    GroupChatAccountsBody,
+    GroupChatJoinLinkBody,
+    GroupChatSettingsBody,
+    GroupChatStartBody,
+)
 from core.app_service import AppService
 
 
@@ -26,6 +31,15 @@ def register(app: FastAPI, service: AppService) -> None:
         except Exception as exc:
             raise HTTPException(400, str(exc)) from exc
         return {"chats": chats}
+
+    @app.post("/api/group-chat/join-link")
+    def api_join_group_chat_link(body: GroupChatJoinLinkBody) -> dict:
+        try:
+            return service.join_group_chat_by_link(body.account_ids, body.link)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     @app.get("/api/group-chat/status")
     def api_group_chat_status() -> dict:

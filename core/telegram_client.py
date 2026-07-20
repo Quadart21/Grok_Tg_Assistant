@@ -3,13 +3,18 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from urllib.parse import urlparse
 
 from telethon import TelegramClient, events
 from telethon.errors import (
+    ChannelPrivateError,
     FloodWaitError,
+    InviteHashExpiredError,
+    InviteHashInvalidError,
     PasswordHashInvalidError,
     PeerFloodError,
     SessionPasswordNeededError,
+    UserAlreadyParticipantError,
     UserPrivacyRestrictedError,
     UsernameInvalidError,
     UsernameNotModifiedError,
@@ -17,6 +22,8 @@ from telethon.errors import (
     UsernameOccupiedError,
 )
 from telethon import functions, password as pwd_mod
+from telethon.tl.functions.channels import JoinChannelRequest
+from telethon.tl.functions.messages import CheckChatInviteRequest, ImportChatInviteRequest
 
 from core.config import ProxyConfig
 from core.session_manager import SessionFormat, SessionInfo
@@ -347,6 +354,26 @@ class TelegramAccountClient:
             )
         return result
 
+    async def join_chat_by_link(self, link: str) -> dict:
+        """Вступить в группу/супергруппу по публичной или invite-ссылке."""
+        if not self._client:
+            raise RuntimeError("Клиент не подключён")
+        target, is_invite = self._parse_chat_link(link)
+        if is_invite:
+            try:
+                updates = await self._client(ImportChatInviteRequest(target))
+                entity = self._extract_joined_chat(updates)
+            except UserAlreadyParticipantError:
+                preview = await self._client(CheckChatInviteRequest(target))
+                entity = self._extract_joined_chat(preview)
+            if not entity:
+                raise RuntimeError("Не удалось определить чат по invite-ссылке")
+            return self._chat_summary(entity)
+
+        await self._client(JoinChannelRequest(target))
+        entity = await self._client.get_entity(target)
+        return self._chat_summary(entity)
+
     async def _resolve_session_path(self) -> Path:
         if self.session.format == SessionFormat.TELEthon:
             return self.session.path
@@ -360,6 +387,54 @@ class TelegramAccountClient:
             raise RuntimeError(result.error)
         return Path(result.output_path)
 
+    @staticmethod
+    def _parse_chat_link(link: str) -> tuple[str, bool]:
+        raw = (link or "").strip()
+        if not raw:
+            raise RuntimeError("Укажите ссылку на чат")
+        if raw.startswith("@"):
+            return raw[1:].strip(), False
+        if "://" not in raw:
+            raw = f"https://{raw}"
+        parsed = urlparse(raw)
+        host = (parsed.netloc or "").lower()
+        if host not in {"t.me", "telegram.me", "www.t.me", "www.telegram.me"}:
+            raise RuntimeError("Поддерживаются только ссылки t.me / telegram.me")
+        path = (parsed.path or "").strip("/")
+        if not path:
+            raise RuntimeError("Не удалось разобрать ссылку на чат")
+        if path.startswith("+"):
+            return path[1:], True
+        if path.startswith("joinchat/"):
+            return path.split("/", 1)[1], True
+        if path.startswith("c/"):
+            raise RuntimeError("Ссылки формата t.me/c/... не подходят для вступления")
+        return path.split("/", 1)[0], False
+
+    @staticmethod
+    def _extract_joined_chat(result) -> object | None:
+        chat = getattr(result, "chat", None)
+        if chat is not None:
+            return chat
+        chats = getattr(result, "chats", None) or []
+        return chats[0] if chats else None
+
+    @staticmethod
+    def _chat_summary(entity) -> dict:
+        chat_id = int(getattr(entity, "id", 0) or 0)
+        title = getattr(entity, "title", None) or getattr(entity, "username", None) or str(chat_id)
+        username = getattr(entity, "username", None) or ""
+        megagroup = bool(getattr(entity, "megagroup", False))
+        broadcast = bool(getattr(entity, "broadcast", False))
+        kind = "channel" if broadcast and not megagroup else ("supergroup" if megagroup else "group")
+        return {
+            "chat_id": chat_id,
+            "title": str(title),
+            "username": str(username),
+            "kind": kind,
+            "participants_count": getattr(entity, "participants_count", None),
+        }
+
 
 TELEGRAM_ERRORS = {
     UsernameInvalidError: "Неверный username",
@@ -371,6 +446,10 @@ TELEGRAM_ERRORS = {
     FloodWaitError: "Flood wait",
     SessionPasswordNeededError: "Нужен пароль 2FA",
     PasswordHashInvalidError: "Неверный пароль 2FA",
+    InviteHashInvalidError: "Неверная invite-ссылка",
+    InviteHashExpiredError: "Invite-ссылка истекла",
+    UserAlreadyParticipantError: "Аккаунт уже в чате",
+    ChannelPrivateError: "Чат приватный или ссылка недоступна",
 }
 
 

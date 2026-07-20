@@ -2179,6 +2179,63 @@ P.findCommonGroupChats = async function() {
   }
 }
 
+P.upsertGroupChatOption = function(chat) {
+  if (!chat || !chat.chat_id) return;
+  const normalized = {
+    chat_id: Number(chat.chat_id),
+    title: chat.title || `Chat ${chat.chat_id}`,
+    username: chat.username || "",
+    kind: chat.kind || "group",
+    participants_count: chat.participants_count ?? null,
+  };
+  const cached = P.state.groupChatCommonCache.find((item) => Number(item.chat_id) === normalized.chat_id);
+  if (cached) {
+    Object.assign(cached, normalized);
+  } else {
+    P.state.groupChatCommonCache.unshift(normalized);
+  }
+  const sel = P.$("#groupChatSelect");
+  if (!sel) return;
+  if (sel.options.length === 1 && !sel.options[0].value) {
+    sel.innerHTML = "";
+  }
+  let option = Array.from(sel.options).find((item) => Number(item.value) === normalized.chat_id);
+  if (!option) {
+    option = document.createElement("option");
+    option.value = String(normalized.chat_id);
+    sel.appendChild(option);
+  }
+  option.textContent = `${normalized.title} (${normalized.kind}, ${normalized.chat_id})`;
+  sel.value = String(normalized.chat_id);
+}
+
+P.joinGroupChatByLink = async function() {
+  const ids = P.groupChatSelectedAccounts().map((item) => item.id);
+  if (!ids.length) return alert("Выберите минимум 1 аккаунт");
+  const link = P.$("#groupChatJoinLink")?.value?.trim() || "";
+  if (!link) return alert("Укажите ссылку на чат");
+  P.$("#groupChatMsg").textContent = "Вступаем в чат...";
+  try {
+    const data = await P.api("/api/group-chat/join-link", {
+      method: "POST",
+      body: JSON.stringify({ account_ids: ids, link }),
+    });
+    if (data.chat) {
+      P.upsertGroupChatOption(data.chat);
+      P.renderGroupChatVenuePreview();
+    }
+    P.$("#groupChatMsg").textContent = data.message || "Вступление завершено";
+    const failed = (data.results || []).filter((item) => !item.success);
+    if (failed.length) {
+      alert(failed.slice(0, 12).map((item) => `${item.account_id}: ${item.message}`).join("\n"));
+    }
+    await P.refreshStatus();
+  } catch (e) {
+    P.$("#groupChatMsg").textContent = e.message;
+    alert(e.message);
+  }
+}
+
 P.refreshGroupChatStatus = async function() {
   const st = await P.api("/api/group-chat/status");
   P.applyGroupChatStatus(st);
@@ -2242,6 +2299,7 @@ P.loadGroupChat = async function() {
 }
 
 P.$("#btnFindCommonChats").onclick = P.findCommonGroupChats;
+P.$("#btnGroupChatJoinLink").onclick = P.joinGroupChatByLink;
 P.$("#btnSaveGroupChatSettings").onclick = P.saveGroupChatSettings;
 P.$("#btnStartGroupChat").onclick = P.startGroupChat;
 P.$("#btnStopGroupChat").onclick = P.stopGroupChat;
