@@ -145,94 +145,136 @@
           <div class="row-between" style="width:100%">
             <div>
               <h2>Аккаунты</h2>
-              <p class="lead">Сессии, конвертация tdata и массовая смена профиля. Пул прокси — во вкладке «Прокси». Папка: <code id="sessionsPath">sessions/</code></p>
+              <p class="lead">Операционная витрина по сессиям: здоровье, конвертация, привязка прокси и быстрая работа с выбранным аккаунтом. Папка: <code id="sessionsPath">sessions/</code></p>
             </div>
             <button class="btn ghost" id="btnRefreshAccounts">↻ Обновить</button>
           </div>
         </header>
 
         <div class="page-grid">
-          <div class="card card-green card-nested">
-            <h3>Конвертер tdata → .session</h3>
-            <p class="hint">Нужны API ID/Hash. 2FA — <code>twoFA.txt</code> или общий пароль в «Подключение».</p>
-            <div class="btn-row">
-              <button class="btn primary" id="btnConvertSelected">Конвертировать выбранные</button>
-              <button class="btn ghost" id="btnConvertAll">Конвертировать все tdata</button>
+          <div class="summary-strip" id="accountsSummary">
+            <div class="summary-card">
+              <span class="summary-label">Всего сессий</span>
+              <strong class="summary-value">0</strong>
+              <span class="summary-note">Загрузка...</span>
             </div>
-            <p id="convertMsg" class="msg"></p>
           </div>
 
-          <div class="card card-purple card-nested">
-            <h3>Массовая смена профиля</h3>
-            <p class="hint">Отметьте аккаунты галочками. При генерации у каждого — уникальные значения.</p>
-            <label class="label">Режим</label>
-            <select id="profileGenerateMode">
-              <option value="manual">Вручную (шаблоны)</option>
-              <option value="names">Случайные имя + фамилия</option>
-              <option value="nicks">Случайный ник (вместо имени)</option>
-            </select>
-            <div id="profileManualBlock">
-              <p class="hint">Шаблоны: <code>{n}</code>, <code>{id}</code></p>
-              <div class="profile-fields">
-                <label class="label inline-check"><input type="checkbox" id="profileChangeFirst"> Имя</label>
-                <input type="text" id="profileFirstName" placeholder="Anna">
-                <label class="label inline-check"><input type="checkbox" id="profileChangeLast"> Фамилия</label>
-                <input type="text" id="profileLastName" placeholder="Smith">
-                <label class="label inline-check"><input type="checkbox" id="profileChangeUsername"> Username</label>
-                <input type="text" id="profileUsername" placeholder="anna{n}">
+          <div class="dispatch-grid">
+            <div class="card card-green card-nested">
+              <div class="section-block-heading">
+                <div>
+                  <h3>Конвертер tdata → .session</h3>
+                  <p class="hint">Нужны API ID/Hash. 2FA можно брать из <code>twoFA.txt</code> или из общего пароля в разделе подключения.</p>
+                </div>
               </div>
-            </div>
-            <div id="profileGenerateBlock" class="hidden">
-              <label class="label">Язык</label>
-              <select id="profileLang">
-                <option value="ru">Русский</option>
-                <option value="en">English</option>
-              </select>
-              <label class="label inline-check"><input type="checkbox" id="profileWithUsername"> Сгенерировать username</label>
               <div class="btn-row">
-                <button type="button" class="btn ghost" id="btnProfilePreview">Показать примеры</button>
+                <button class="btn primary" id="btnConvertSelected">Конвертировать выбранные</button>
+                <button class="btn ghost" id="btnConvertAll">Конвертировать все tdata</button>
               </div>
-              <pre id="profilePreviewBox" class="profile-preview hidden"></pre>
+              <p id="convertMsg" class="msg"></p>
             </div>
-            <label class="label">Пауза между аккаунтами (сек)</label>
-            <input type="number" id="profileDelay" value="3" min="2" max="60" style="max-width:6rem">
-            <div class="btn-row">
-              <button class="btn primary" id="btnBulkProfile">Применить к выбранным</button>
+
+            <div class="card card-purple card-nested">
+              <div class="section-block-heading">
+                <div>
+                  <h3>Массовая смена профиля</h3>
+                  <p class="hint">Работает по отмеченным аккаунтам. Генерация оставлена простой: шаблоны, имена или ники.</p>
+                </div>
+              </div>
+              <label class="label">Режим</label>
+              <select id="profileGenerateMode">
+                <option value="manual">Вручную (шаблоны)</option>
+                <option value="names">Случайные имя + фамилия</option>
+                <option value="nicks">Случайный ник (вместо имени)</option>
+              </select>
+              <div id="profileManualBlock">
+                <p class="hint">Шаблоны: <code>{n}</code>, <code>{id}</code></p>
+                <div class="profile-fields">
+                  <label class="label inline-check"><input type="checkbox" id="profileChangeFirst"> Имя</label>
+                  <input type="text" id="profileFirstName" placeholder="Anna">
+                  <label class="label inline-check"><input type="checkbox" id="profileChangeLast"> Фамилия</label>
+                  <input type="text" id="profileLastName" placeholder="Smith">
+                  <label class="label inline-check"><input type="checkbox" id="profileChangeUsername"> Username</label>
+                  <input type="text" id="profileUsername" placeholder="anna{n}">
+                </div>
+              </div>
+              <div id="profileGenerateBlock" class="hidden">
+                <label class="label">Язык</label>
+                <select id="profileLang">
+                  <option value="ru">Русский</option>
+                  <option value="en">English</option>
+                </select>
+                <label class="label inline-check"><input type="checkbox" id="profileWithUsername"> Сгенерировать username</label>
+                <div class="btn-row">
+                  <button type="button" class="btn ghost" id="btnProfilePreview">Показать примеры</button>
+                </div>
+                <pre id="profilePreviewBox" class="profile-preview hidden"></pre>
+              </div>
+              <label class="label">Пауза между аккаунтами (сек)</label>
+              <input type="number" id="profileDelay" value="3" min="2" max="60" style="max-width:6rem">
+              <div class="btn-row">
+                <button class="btn primary" id="btnBulkProfile">Применить к выбранным</button>
+              </div>
+              <p id="profileMsg" class="msg"></p>
             </div>
-            <p id="profileMsg" class="msg"></p>
           </div>
 
-          <div class="accounts-toolbar">
-            <div class="accounts-toolbar-block">
-              <span class="toolbar-label">Выбор</span>
-              <div class="accounts-toolbar-row">
-                <label class="inline-check"><input type="checkbox" id="chkSelectAllAccounts"> Все в таблице</label>
-                <label class="inline-check" title="Иначе новый фильтр заменяет выбор"><input type="checkbox" id="chkSelectAdditive"> Добавлять к выбору</label>
-                <button type="button" class="btn btn-sm ghost" id="btnClearAccountSelection">Снять всё</button>
-                <span class="accounts-selected-hint" id="accountsSelectedHint"></span>
+          <div class="operations-shell">
+            <div class="card operations-main">
+              <div class="section-block-heading">
+                <div>
+                  <h3>Реестр сессий</h3>
+                  <p class="hint">Слева выбор и фильтры, в строке аккаунта видно готовность, прокси и роль. Клик по строке открывает рабочую карточку справа.</p>
+                </div>
               </div>
-              <div class="filter-chips" id="accountSelectChips"></div>
-            </div>
-            <div class="accounts-toolbar-block">
-              <span class="toolbar-label">Показать в таблице</span>
-              <p class="hint" style="margin:0">По умолчанию — только аккаунты для рассылки. Снимите «Для рассылки», чтобы увидеть ассистентов и неактивные.</p>
-              <div class="filter-checks" id="accountViewFilters"></div>
-              <button type="button" class="btn btn-sm ghost" id="btnResetViewFilters">Сбросить показ</button>
-            </div>
-          </div>
 
-          <div class="split">
-            <div class="card" style="padding:0;overflow:hidden">
-              <div class="table-wrap" style="border:none;border-radius:0">
+              <div class="accounts-toolbar">
+                <div class="accounts-toolbar-block">
+                  <span class="toolbar-label">Выбор</span>
+                  <div class="accounts-toolbar-row">
+                    <label class="inline-check"><input type="checkbox" id="chkSelectAllAccounts"> Все в таблице</label>
+                    <label class="inline-check" title="Иначе новый фильтр заменяет выбор"><input type="checkbox" id="chkSelectAdditive"> Добавлять к выбору</label>
+                    <button type="button" class="btn btn-sm ghost" id="btnClearAccountSelection">Снять всё</button>
+                    <span class="accounts-selected-hint" id="accountsSelectedHint"></span>
+                  </div>
+                  <div class="filter-chips" id="accountSelectChips"></div>
+                </div>
+                <div class="accounts-toolbar-block">
+                  <span class="toolbar-label">Показать в таблице</span>
+                  <p class="hint" style="margin:0">По умолчанию остаются только аккаунты для рассылки. Снимите фильтр, если хотите увидеть ассистентов или проблемные сессии.</p>
+                  <div class="filter-checks" id="accountViewFilters"></div>
+                  <button type="button" class="btn btn-sm ghost" id="btnResetViewFilters">Сбросить показ</button>
+                </div>
+              </div>
+
+              <div class="table-wrap operations-table">
                 <table>
-                  <thead><tr><th></th><th>Аккаунт</th><th>Тип</th><th>.session</th><th>Прокси</th><th>Стиль</th></tr></thead>
+                  <thead><tr><th></th><th>Аккаунт</th><th>Готовность</th><th>Прокси</th><th>Роль</th><th>Флаги</th></tr></thead>
                   <tbody id="accountsTable"></tbody>
                 </table>
               </div>
             </div>
-            <div class="proxy-panel">
-              <h3>Привязка прокси</h3>
-              <p id="proxyAccountLabel" class="hint">Выберите аккаунт в таблице</p>
+
+            <aside class="card detail-card">
+              <div class="detail-header">
+                <div>
+                  <h3>Карточка сессии</h3>
+                  <p id="proxyAccountLabel" class="hint">Выберите аккаунт в таблице</p>
+                </div>
+                <span class="chip muted" id="sessionDetailBadge">нет выбора</span>
+              </div>
+              <div class="detail-badges" id="sessionDetailMeta">
+                <span class="chip muted">Ожидание выбора</span>
+              </div>
+              <dl class="detail-list" id="sessionDetailList">
+                <div><dt>Статус</dt><dd>Список появится после выбора строки.</dd></div>
+              </dl>
+
+              <div class="detail-section">
+                <h4>Быстрая привязка прокси</h4>
+                <p class="hint">Можно выбрать прокси из пула или добавить новый вручную прямо отсюда.</p>
+              </div>
               <label class="label">Прокси из пула</label>
               <select id="proxyPoolSelect" disabled>
                 <option value="">— не выбран —</option>
@@ -241,8 +283,8 @@
                 <button class="btn primary" id="btnBindProxy" disabled>Привязать</button>
                 <button class="btn ghost" id="btnClearProxy" disabled>Отвязать</button>
               </div>
-              <hr class="divider">
-              <details>
+
+              <details class="inline-details">
                 <summary>Добавить новый вручную</summary>
                 <label class="label">Тип</label>
                 <select id="proxyType">
@@ -262,7 +304,7 @@
                   <button class="btn ghost" id="btnSaveProxy" disabled>Сохранить и привязать</button>
                 </div>
               </details>
-            </div>
+            </aside>
           </div>
         </div>
       </section>
@@ -273,16 +315,28 @@
           <div class="row-between" style="width:100%">
             <div>
               <h2>Прокси</h2>
-              <p class="lead">Пул прокси с проверкой, страной и пингом. Привязка к аккаунтам — в таблице аккаунтов или массово.</p>
+              <p class="lead">Лёгкий диспетчер прокси: импорт, перепроверка, загрузка по аккаунтам и карточка выбранного узла без лишней аналитики.</p>
             </div>
             <button class="btn ghost" id="btnRefreshProxyPool">↻ Обновить</button>
           </div>
         </header>
 
         <div class="page-grid">
+          <div class="summary-strip" id="proxySummary">
+            <div class="summary-card">
+              <span class="summary-label">Всего прокси</span>
+              <strong class="summary-value">0</strong>
+              <span class="summary-note">Загрузка...</span>
+            </div>
+          </div>
+
           <div class="card card-green">
-            <h3>Импорт в пул</h3>
-            <p class="hint">Список проверяется при добавлении: работоспособность, страна, дубликаты отбрасываются. В пул попадают только рабочие.</p>
+            <div class="section-block-heading">
+              <div>
+                <h3>Импорт в пул</h3>
+                <p class="hint">При добавлении сразу проверяем доступность, страну и дубликаты. В таблицу идут только рабочие записи.</p>
+              </div>
+            </div>
             <p class="hint">Форматы: <code>host:port</code>, <code>host:port:login:pass</code>, <code>login:pass@host:port</code></p>
             <div class="grid2">
               <div>
@@ -305,36 +359,69 @@
             </div>
           </div>
 
-          <div class="card">
-            <div class="accounts-toolbar proxy-pool-toolbar" style="margin:0;padding:0;border:none;background:transparent">
-              <div class="accounts-toolbar-block">
-                <span class="toolbar-label">Массовое управление</span>
-                <div class="accounts-toolbar-row">
-                  <label class="inline-check"><input type="checkbox" id="chkSelectAllProxies"> Все в таблице</label>
-                  <button type="button" class="btn btn-sm ghost" id="btnClearProxySelection">Снять всё</button>
-                  <span class="accounts-selected-hint" id="proxySelectedHint"></span>
+          <div class="operations-shell">
+            <div class="card operations-main">
+              <div class="section-block-heading">
+                <div>
+                  <h3>Реестр прокси</h3>
+                  <p class="hint">Основные операции остаются наверху, а подробности и привязанные аккаунты показываются в правой карточке.</p>
                 </div>
-                <div class="filter-chips" id="proxySelectChips"></div>
               </div>
-              <div class="accounts-toolbar-block">
-                <span class="toolbar-label">Показать</span>
-                <div class="filter-checks" id="proxyViewFilters"></div>
-                <div class="btn-row" style="margin:0.35rem 0 0">
-                  <button type="button" class="btn btn-sm ghost" id="btnProxyRecheckSelected">↻ Перепроверить</button>
-                  <button type="button" class="btn btn-sm danger" id="btnProxyDeleteSelected">Удалить</button>
-                  <button type="button" class="btn btn-sm danger" id="btnProxyPurgeDead">Удалить мёртвые</button>
-                  <button type="button" class="btn btn-sm primary" id="btnProxyAutoBind">Привязать к аккаунтам</button>
+
+              <div class="accounts-toolbar proxy-pool-toolbar" style="margin:0;padding:0;border:none;background:transparent">
+                <div class="accounts-toolbar-block">
+                  <span class="toolbar-label">Массовое управление</span>
+                  <div class="accounts-toolbar-row">
+                    <label class="inline-check"><input type="checkbox" id="chkSelectAllProxies"> Все в таблице</label>
+                    <button type="button" class="btn btn-sm ghost" id="btnClearProxySelection">Снять всё</button>
+                    <span class="accounts-selected-hint" id="proxySelectedHint"></span>
+                  </div>
+                  <div class="filter-chips" id="proxySelectChips"></div>
                 </div>
+                <div class="accounts-toolbar-block">
+                  <span class="toolbar-label">Показать</span>
+                  <div class="filter-checks" id="proxyViewFilters"></div>
+                  <div class="btn-row" style="margin:0.35rem 0 0">
+                    <button type="button" class="btn btn-sm ghost" id="btnProxyRecheckSelected">↻ Перепроверить</button>
+                    <button type="button" class="btn btn-sm danger" id="btnProxyDeleteSelected">Удалить</button>
+                    <button type="button" class="btn btn-sm danger" id="btnProxyPurgeDead">Удалить мёртвые</button>
+                    <button type="button" class="btn btn-sm primary" id="btnProxyAutoBind">Привязать к аккаунтам</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="table-wrap operations-table" style="margin-top:0.75rem">
+                <table>
+                  <thead>
+                    <tr><th></th><th>Прокси</th><th>Страна</th><th>Статус</th><th>Пинг</th><th>Нагрузка</th><th></th></tr>
+                  </thead>
+                  <tbody id="proxyPoolTable"></tbody>
+                </table>
               </div>
             </div>
 
-            <div class="table-wrap" style="margin-top:0.75rem">
-              <table>
-                <thead>
-                  <tr><th></th><th>Прокси</th><th>Страна</th><th>Статус</th><th>Пинг</th><th>Привязано</th><th></th></tr>
-                </thead>
-                <tbody id="proxyPoolTable"></tbody>
-              </table>
+            <aside class="card detail-card">
+              <div class="detail-header">
+                <div>
+                  <h3>Карточка прокси</h3>
+                  <p class="hint" id="proxyDetailTitle">Выберите прокси в таблице</p>
+                </div>
+                <span class="chip muted" id="proxyDetailBadge">нет выбора</span>
+              </div>
+              <div class="detail-badges" id="proxyDetailMeta">
+                <span class="chip muted">Ожидание выбора</span>
+              </div>
+              <dl class="detail-list" id="proxyDetailList">
+                <div><dt>Статус</dt><dd>Детали появятся после выбора прокси.</dd></div>
+              </dl>
+              <div class="detail-section">
+                <h4>Привязанные аккаунты</h4>
+                <p class="hint" id="proxyDetailAccounts">Нет данных</p>
+              </div>
+              <div class="btn-row">
+                <button type="button" class="btn ghost" id="btnProxyDetailRecheck" disabled>↻ Перепроверить</button>
+                <button type="button" class="btn danger" id="btnProxyDetailDelete" disabled>Удалить</button>
+              </div>
             </div>
           </div>
         </div>
@@ -486,186 +573,268 @@
       <section class="panel" id="panel-groupchat" data-title="Групповой чат">
         <header class="page-header">
           <h2>Групповой чат</h2>
-          <p class="lead">Выбранные аккаунты общаются в общем чате по теме и ролям — с расписанием и «живым» поведением.</p>
+          <p class="lead">Собирайте разговор как сцену: выберите состав, площадку, тему, роли и следите за тем, как команда ведет диалог.</p>
         </header>
-        <div class="page-grid page-grid-2">
-          <div class="card card-accent">
-            <div class="card-header">
-              <div>
-                <h3>Сессия</h3>
-                <p class="hint">Отметьте ≥2 аккаунта → найдите общие чаты → задайте тему и роли.</p>
-              </div>
-              <span class="chip" id="groupChatStats">Остановлен</span>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr><th></th><th>Аккаунт</th><th>Роль (Стиль)</th><th>Вес</th></tr>
-                </thead>
-                <tbody id="groupChatAccountsTable"></tbody>
-              </table>
-            </div>
-            <div class="btn-row">
-              <button class="btn ghost" id="btnFindCommonChats">Найти общие чаты</button>
-            </div>
-            <label class="label">Общий чат</label>
-            <select id="groupChatSelect">
-              <option value="">— сначала найдите общие чаты —</option>
-            </select>
-            <label class="label">Тема разговора</label>
-            <input type="text" id="groupChatTopic" placeholder="Например: обсуждаем запуск продукта">
-            <label class="label">Доп. контекст (необязательно)</label>
-            <textarea id="groupChatExtra" rows="2" placeholder="Детали, факты, тон..."></textarea>
-            <div id="groupChatRolesBox"></div>
-            <div class="btn-row">
-              <button class="btn primary" id="btnStartGroupChat">▶ Запустить</button>
-              <button class="btn danger" id="btnStopGroupChat" disabled>■ Стоп</button>
-              <button class="btn ghost" id="btnRefreshGroupChat">↻</button>
-            </div>
-            <p id="groupChatMsg" class="msg"></p>
-            <p class="stats" id="groupChatLiveStats">Ожидание запуска</p>
-          </div>
-
-          <div class="card">
-            <div class="card-header"><h3>Последние реплики</h3></div>
-            <pre id="groupChatLog" class="history-box" style="min-height:180px;white-space:pre-wrap"></pre>
-          </div>
+        <div class="summary-strip">
+          <article class="summary-card">
+            <span class="summary-label">Статус сцены</span>
+            <strong class="summary-value" id="groupChatSummaryStatus">Остановлен</strong>
+            <span class="summary-note" id="groupChatSummaryStatusNote">Соберите состав и площадку для запуска.</span>
+          </article>
+          <article class="summary-card">
+            <span class="summary-label">Состав</span>
+            <strong class="summary-value" id="groupChatSummaryAccounts">0 аккаунтов</strong>
+            <span class="summary-note" id="groupChatSummaryAccountsNote">Для живого диалога лучше 3-6 участников.</span>
+          </article>
+          <article class="summary-card">
+            <span class="summary-label">Площадка</span>
+            <strong class="summary-value" id="groupChatSummaryVenue">Не выбрана</strong>
+            <span class="summary-note" id="groupChatSummaryVenueNote">Сначала найдите общие чаты между аккаунтами.</span>
+          </article>
+          <article class="summary-card">
+            <span class="summary-label">Активность</span>
+            <strong class="summary-value" id="groupChatSummaryVolume">0 сообщений</strong>
+            <span class="summary-note" id="groupChatSummaryVolumeNote">Лимиты и темп покажем после старта.</span>
+          </article>
         </div>
 
-        <div class="page-grid">
-          <div class="card">
-            <div class="card-header">
-              <h3>Расписание и квоты</h3>
-              <button class="btn btn-sm primary" id="btnSaveGroupChatSettings">Сохранить настройки</button>
-            </div>
-            <div class="grid2">
-              <label class="inline-check"><input type="checkbox" id="gc_use_schedule" checked> Работать по расписанию</label>
-              <label class="inline-check"><input type="checkbox" id="gc_resume_next_day" checked> Продолжать на следующий день</label>
-              <div>
-                <label class="label">Смещение TZ (часов, пусто = ПК)</label>
-                <input type="number" id="gc_timezone_offset_hours" step="0.5" placeholder="пусто = локально">
-              </div>
-              <div>
-                <label class="label">Вероятность онлайна (0–1)</label>
-                <input type="number" id="gc_online_probability" min="0" max="1" step="0.05" value="0.55">
-              </div>
-              <div>
-                <label class="label">Тихая пауза мин (мин–макс)</label>
-                <div class="btn-row">
-                  <input type="number" id="gc_quiet_break_min_min" value="15" style="width:6rem">
-                  <input type="number" id="gc_quiet_break_max_min" value="90" style="width:6rem">
+        <div class="operations-shell group-chat-shell">
+          <div class="operations-main group-chat-main">
+            <div class="card card-accent">
+              <div class="section-block-heading">
+                <div>
+                  <h3>Команда разговора</h3>
+                  <p class="hint">Отберите участников, задайте им вес активности и подготовьте роли под тему.</p>
+                </div>
+                <div class="detail-badges">
+                  <span class="chip" id="groupChatStats">Остановлен</span>
                 </div>
               </div>
-              <div>
-                <label class="label">Шанс тихой паузы (0–1)</label>
-                <input type="number" id="gc_quiet_break_chance" min="0" max="1" step="0.01" value="0.12">
+              <div class="btn-row">
+                <button class="btn ghost" id="btnGroupChatSelectReady">Выбрать готовые</button>
+                <button class="btn ghost" id="btnGroupChatSelectAll">Выбрать всех</button>
+                <button class="btn ghost" id="btnGroupChatClearSelection">Очистить</button>
               </div>
+              <p class="hint" id="groupChatSelectionHint">Нужно минимум 2 аккаунта. Для естественного разговора рекомендуем 3-6 участников.</p>
+              <div class="group-chat-accounts-grid" id="groupChatAccountsGrid"></div>
             </div>
-            <label class="label">Окна активности (JSON: days 0=Пн…6=Вс, start/end HH:MM)</label>
-            <textarea id="gc_activity_windows" rows="5"></textarea>
-            <div class="grid2" style="margin-top:1rem">
-              <div>
-                <label class="label">Лимит / аккаунт / сессия</label>
-                <input type="number" id="gc_max_messages_per_account_session" value="40">
-              </div>
-              <div>
-                <label class="label">Лимит / аккаунт / час</label>
-                <input type="number" id="gc_max_messages_per_account_hour" value="12">
-              </div>
-              <div>
-                <label class="label">Лимит / аккаунт / день</label>
-                <input type="number" id="gc_max_messages_per_account_day" value="30">
-              </div>
-              <div>
-                <label class="label">Лимит группы / день</label>
-                <input type="number" id="gc_max_messages_group_day" value="80">
-              </div>
-              <div>
-                <label class="label">Burst мин–макс</label>
-                <div class="btn-row">
-                  <input type="number" id="gc_burst_min" value="1" style="width:6rem">
-                  <input type="number" id="gc_burst_max" value="3" style="width:6rem">
+
+            <div class="page-grid page-grid-2">
+              <div class="card">
+                <div class="section-block-heading">
+                  <div>
+                    <h3>Площадка и сценарий</h3>
+                    <p class="hint">Найдите общий чат, задайте тему и контекст, чтобы вся группа держала одну линию.</p>
+                  </div>
+                  <button class="btn ghost" id="btnFindCommonChats">Найти общие чаты</button>
+                </div>
+                <label class="label">Общий чат</label>
+                <select id="groupChatSelect">
+                  <option value="">— сначала найдите общие чаты —</option>
+                </select>
+                <div class="group-chat-venue-preview" id="groupChatVenueMeta">
+                  <strong>Площадка не выбрана</strong>
+                  <span>После поиска здесь покажем тип, id и состав чата.</span>
+                </div>
+                <label class="label">Тема разговора</label>
+                <input type="text" id="groupChatTopic" placeholder="Например: обсуждаем запуск продукта">
+                <label class="label">Контекст сцены</label>
+                <textarea id="groupChatExtra" rows="4" placeholder="Что уже известно, какой фон у беседы, какие детали важно упоминать..."></textarea>
+                <div class="group-chat-presets">
+                  <span class="hint">Быстрый темп:</span>
+                  <button type="button" class="btn ghost gc-preset" data-preset="natural">Естественно</button>
+                  <button type="button" class="btn ghost gc-preset" data-preset="calm">Спокойно</button>
+                  <button type="button" class="btn ghost gc-preset" data-preset="active">Активно</button>
                 </div>
               </div>
-              <div>
-                <label class="label">Макс. подряд один спикер</label>
-                <input type="number" id="gc_max_consecutive_same_speaker" value="3">
+
+              <div class="card">
+                <div class="section-block-heading">
+                  <div>
+                    <h3>Командные роли</h3>
+                    <p class="hint">У каждого участника можно быстро уточнить роль и индивидуальный промпт.</p>
+                  </div>
+                </div>
+                <div id="groupChatRolesBox"></div>
+              </div>
+            </div>
+
+            <div class="page-grid">
+              <div class="card">
+                <div class="card-header">
+                  <h3>Расписание и квоты</h3>
+                  <button class="btn btn-sm primary" id="btnSaveGroupChatSettings">Сохранить настройки</button>
+                </div>
+                <div class="grid2">
+                  <label class="inline-check"><input type="checkbox" id="gc_use_schedule" checked> Работать по расписанию</label>
+                  <label class="inline-check"><input type="checkbox" id="gc_resume_next_day" checked> Продолжать на следующий день</label>
+                  <div>
+                    <label class="label">Смещение TZ (часов, пусто = ПК)</label>
+                    <input type="number" id="gc_timezone_offset_hours" step="0.5" placeholder="пусто = локально">
+                  </div>
+                  <div>
+                    <label class="label">Вероятность онлайна (0–1)</label>
+                    <input type="number" id="gc_online_probability" min="0" max="1" step="0.05" value="0.55">
+                  </div>
+                  <div>
+                    <label class="label">Тихая пауза мин (мин–макс)</label>
+                    <div class="btn-row">
+                      <input type="number" id="gc_quiet_break_min_min" value="15" style="width:6rem">
+                      <input type="number" id="gc_quiet_break_max_min" value="90" style="width:6rem">
+                    </div>
+                  </div>
+                  <div>
+                    <label class="label">Шанс тихой паузы (0–1)</label>
+                    <input type="number" id="gc_quiet_break_chance" min="0" max="1" step="0.01" value="0.12">
+                  </div>
+                </div>
+                <label class="label">Окна активности (JSON: days 0=Пн…6=Вс, start/end HH:MM)</label>
+                <textarea id="gc_activity_windows" rows="5"></textarea>
+                <div class="grid2" style="margin-top:1rem">
+                  <div>
+                    <label class="label">Лимит / аккаунт / сессия</label>
+                    <input type="number" id="gc_max_messages_per_account_session" value="40">
+                  </div>
+                  <div>
+                    <label class="label">Лимит / аккаунт / час</label>
+                    <input type="number" id="gc_max_messages_per_account_hour" value="12">
+                  </div>
+                  <div>
+                    <label class="label">Лимит / аккаунт / день</label>
+                    <input type="number" id="gc_max_messages_per_account_day" value="30">
+                  </div>
+                  <div>
+                    <label class="label">Лимит группы / день</label>
+                    <input type="number" id="gc_max_messages_group_day" value="80">
+                  </div>
+                  <div>
+                    <label class="label">Burst мин–макс</label>
+                    <div class="btn-row">
+                      <input type="number" id="gc_burst_min" value="1" style="width:6rem">
+                      <input type="number" id="gc_burst_max" value="3" style="width:6rem">
+                    </div>
+                  </div>
+                  <div>
+                    <label class="label">Макс. подряд один спикер</label>
+                    <input type="number" id="gc_max_consecutive_same_speaker" value="3">
+                  </div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-header"><h3>Тайминги и стиль</h3></div>
+                <div class="grid2">
+                  <div>
+                    <label class="label">Пауза между спикерами (сек)</label>
+                    <div class="btn-row">
+                      <input type="number" id="gc_delay_between_speakers_min_sec" value="25" style="width:6rem">
+                      <input type="number" id="gc_delay_between_speakers_max_sec" value="120" style="width:6rem">
+                    </div>
+                  </div>
+                  <div>
+                    <label class="label">Пауза внутри burst (сек)</label>
+                    <div class="btn-row">
+                      <input type="number" id="gc_delay_within_burst_min_sec" value="3" style="width:6rem">
+                      <input type="number" id="gc_delay_within_burst_max_sec" value="12" style="width:6rem">
+                    </div>
+                  </div>
+                  <div>
+                    <label class="label">Шанс «прочитал и ждёт»</label>
+                    <input type="number" id="gc_read_and_wait_chance" min="0" max="1" step="0.05" value="0.25">
+                  </div>
+                  <div>
+                    <label class="label">Ожидание после прочтения (сек)</label>
+                    <div class="btn-row">
+                      <input type="number" id="gc_read_and_wait_min_sec" value="20" style="width:6rem">
+                      <input type="number" id="gc_read_and_wait_max_sec" value="90" style="width:6rem">
+                    </div>
+                  </div>
+                  <div>
+                    <label class="label">Шанс короткой реплики</label>
+                    <input type="number" id="gc_short_reply_chance" min="0" max="1" step="0.05" value="0.35">
+                  </div>
+                  <div>
+                    <label class="label">Стиль реплик</label>
+                    <select id="gc_reply_style">
+                      <option value="mixed">смешанный</option>
+                      <option value="short">короткие</option>
+                      <option value="medium">средние</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="label">Язык</label>
+                    <input type="text" id="gc_language" value="ru">
+                  </div>
+                  <div>
+                    <label class="label">Temperature / max tokens</label>
+                    <div class="btn-row">
+                      <input type="number" id="gc_temperature" step="0.1" value="0.9" style="width:6rem">
+                      <input type="number" id="gc_max_tokens" value="250" style="width:6rem">
+                    </div>
+                  </div>
+                  <div>
+                    <label class="label">История (сообщений)</label>
+                    <input type="number" id="gc_history_limit" value="40">
+                  </div>
+                  <div>
+                    <label class="inline-check" style="margin-top:1.5rem"><input type="checkbox" id="gc_split_long_messages" checked> Дробить длинные</label>
+                  </div>
+                  <div>
+                    <label class="label">Дробить от N символов / макс. частей</label>
+                    <div class="btn-row">
+                      <input type="number" id="gc_split_at_chars" value="280" style="width:6rem">
+                      <input type="number" id="gc_split_parts_max" value="3" style="width:6rem">
+                    </div>
+                  </div>
+                  <div>
+                    <label class="label">Стоп-слова (через запятую)</label>
+                    <input type="text" id="gc_stop_keywords" value="стоп боты, stop bots">
+                  </div>
+                </div>
+                <p id="groupChatSettingsMsg" class="msg"></p>
               </div>
             </div>
           </div>
 
-          <div class="card">
-            <div class="card-header"><h3>Тайминги и стиль</h3></div>
-            <div class="grid2">
-              <div>
-                <label class="label">Пауза между спикерами (сек)</label>
-                <div class="btn-row">
-                  <input type="number" id="gc_delay_between_speakers_min_sec" value="25" style="width:6rem">
-                  <input type="number" id="gc_delay_between_speakers_max_sec" value="120" style="width:6rem">
+          <aside class="detail-card">
+            <div class="card">
+              <div class="detail-header">
+                <div>
+                  <h3>Управление сценой</h3>
+                  <p class="hint">Запуск, стоп и текущая сводка по разговору.</p>
+                </div>
+                <div class="detail-badges">
+                  <button class="btn primary" id="btnStartGroupChat">▶ Запустить</button>
+                  <button class="btn danger" id="btnStopGroupChat" disabled>■ Стоп</button>
+                  <button class="btn ghost" id="btnRefreshGroupChat">↻</button>
                 </div>
               </div>
-              <div>
-                <label class="label">Пауза внутри burst (сек)</label>
-                <div class="btn-row">
-                  <input type="number" id="gc_delay_within_burst_min_sec" value="3" style="width:6rem">
-                  <input type="number" id="gc_delay_within_burst_max_sec" value="12" style="width:6rem">
-                </div>
-              </div>
-              <div>
-                <label class="label">Шанс «прочитал и ждёт»</label>
-                <input type="number" id="gc_read_and_wait_chance" min="0" max="1" step="0.05" value="0.25">
-              </div>
-              <div>
-                <label class="label">Ожидание после прочтения (сек)</label>
-                <div class="btn-row">
-                  <input type="number" id="gc_read_and_wait_min_sec" value="20" style="width:6rem">
-                  <input type="number" id="gc_read_and_wait_max_sec" value="90" style="width:6rem">
-                </div>
-              </div>
-              <div>
-                <label class="label">Шанс короткой реплики</label>
-                <input type="number" id="gc_short_reply_chance" min="0" max="1" step="0.05" value="0.35">
-              </div>
-              <div>
-                <label class="label">Стиль реплик</label>
-                <select id="gc_reply_style">
-                  <option value="mixed">смешанный</option>
-                  <option value="short">короткие</option>
-                  <option value="medium">средние</option>
-                </select>
-              </div>
-              <div>
-                <label class="label">Язык</label>
-                <input type="text" id="gc_language" value="ru">
-              </div>
-              <div>
-                <label class="label">Temperature / max tokens</label>
-                <div class="btn-row">
-                  <input type="number" id="gc_temperature" step="0.1" value="0.9" style="width:6rem">
-                  <input type="number" id="gc_max_tokens" value="250" style="width:6rem">
-                </div>
-              </div>
-              <div>
-                <label class="label">История (сообщений)</label>
-                <input type="number" id="gc_history_limit" value="40">
-              </div>
-              <div>
-                <label class="inline-check" style="margin-top:1.5rem"><input type="checkbox" id="gc_split_long_messages" checked> Дробить длинные</label>
-              </div>
-              <div>
-                <label class="label">Дробить от N символов / макс. частей</label>
-                <div class="btn-row">
-                  <input type="number" id="gc_split_at_chars" value="280" style="width:6rem">
-                  <input type="number" id="gc_split_parts_max" value="3" style="width:6rem">
-                </div>
-              </div>
-              <div>
-                <label class="label">Стоп-слова (через запятую)</label>
-                <input type="text" id="gc_stop_keywords" value="стоп боты, stop bots">
-              </div>
+              <p class="stats" id="groupChatLiveStats">Ожидание запуска</p>
+              <dl class="detail-list">
+                <div><dt>Статус</dt><dd id="groupChatDetailStatus">Остановлен</dd></div>
+                <div><dt>Площадка</dt><dd id="groupChatDetailChat">—</dd></div>
+                <div><dt>Тема</dt><dd id="groupChatDetailTopic">—</dd></div>
+                <div><dt>Последний спикер</dt><dd id="groupChatDetailSpeaker">—</dd></div>
+                <div><dt>Последняя активность</dt><dd id="groupChatDetailActivity">—</dd></div>
+              </dl>
+              <p id="groupChatMsg" class="msg"></p>
             </div>
-            <p id="groupChatSettingsMsg" class="msg"></p>
-          </div>
+
+            <div class="card">
+              <div class="card-header"><h3>Участники в работе</h3></div>
+              <div id="groupChatParticipants" class="group-chat-participants"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-header"><h3>Нагрузка и лимиты</h3></div>
+              <div id="groupChatLeaderboard" class="group-chat-metrics-list"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-header"><h3>Последние реплики</h3></div>
+              <div id="groupChatLog" class="group-chat-log-feed"></div>
+            </div>
+          </aside>
         </div>
       </section>
   </main>

@@ -1175,22 +1175,65 @@ class AppService:
 
     def get_group_chat_status(self) -> dict[str, Any]:
         s = self._group_chat_stats
+        self.state_store.load()
+        session = self.state_store.group_session
+
+        account_ids = list(s.account_ids)
+        if not account_ids and session:
+            account_ids = list(session.account_ids)
+
+        session_counts = dict(s.session_counts)
+        if session and not session_counts:
+            session_counts = dict(session.session_counts)
+
+        day_counts = dict(s.day_counts)
+        if session and not day_counts:
+            day_counts = dict(session.day_counts)
+
+        recent_messages = list(s.recent_messages)
+        if session and not recent_messages:
+            recent_messages = list(session.messages[-12:])
+
+        running_accounts = sorted(self._group_chat_account_ids)
+        participants: list[dict[str, Any]] = []
+        role_names = session.role_names if session else {}
+        role_prompts = session.role_prompts if session else {}
+        weights = session.activity_weights if session else {}
+        for account_id in account_ids:
+            participants.append(
+                {
+                    "account_id": account_id,
+                    "role_name": role_names.get(account_id, ""),
+                    "role_prompt": role_prompts.get(account_id, ""),
+                    "weight": weights.get(account_id, 1),
+                    "session_count": session_counts.get(account_id, 0),
+                    "day_count": day_counts.get(account_id, 0),
+                    "running": account_id in self._group_chat_account_ids,
+                }
+            )
+
         return {
             "running": self._group_chat_running,
             "paused_schedule": s.paused_schedule,
-            "chat_id": s.chat_id,
-            "chat_title": s.chat_title,
-            "topic": s.topic,
-            "account_ids": list(s.account_ids),
+            "chat_id": s.chat_id or (session.chat_id if session else 0),
+            "chat_title": s.chat_title or (session.chat_title if session else ""),
+            "topic": s.topic or (session.topic if session else ""),
+            "account_ids": account_ids,
             "messages_sent": s.messages_sent,
             "last_speaker": s.last_speaker,
             "last_message": s.last_message,
             "status_text": s.status_text,
-            "session_counts": dict(s.session_counts),
-            "day_counts": dict(s.day_counts),
-            "group_day_count": s.group_day_count,
-            "recent_messages": list(s.recent_messages),
-            "running_accounts": sorted(self._group_chat_account_ids),
+            "session_counts": session_counts,
+            "day_counts": day_counts,
+            "group_day_count": s.group_day_count or (session.group_day_count if session else 0),
+            "recent_messages": recent_messages,
+            "running_accounts": running_accounts,
+            "participants": participants,
+            "extra_context": session.extra_context if session else "",
+            "created_at": session.created_at if session else "",
+            "last_activity": session.last_activity if session else "",
+            "stored_status": session.status if session else ("running" if self._group_chat_running else "idle"),
+            "message_count": len(session.messages) if session else len(recent_messages),
         }
 
     def start_group_chat(

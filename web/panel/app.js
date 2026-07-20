@@ -5,6 +5,7 @@ let selectedAccount = null;
 let selectedForRun = new Set();
 let accountsCache = [];
 let proxyPoolCache = [];
+let selectedProxyId = null;
 let selectedProxies = new Set();
 let proxyViewFilters = new Set();
 let proxyFiltersInited = false;
@@ -15,6 +16,26 @@ let logOffset = 0;
 
 function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function safeText(value, fallback = "—") {
+  const text = value === null || value === undefined || value === "" ? fallback : String(value);
+  return escapeHtml(text);
+}
+
+function formatDateTime(value) {
+  if (!value) return "—";
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return safeText(value);
+  return dt.toLocaleString("ru-RU");
+}
+
+function formatLatency(value) {
+  return value ? `${value} ms` : "—";
+}
+
+function yesNoChip(flag, yes, no = "—") {
+  return flag ? `<span class="chip ok">${escapeHtml(yes)}</span>` : `<span class="chip muted">${escapeHtml(no)}</span>`;
 }
 
 async function api(path, opts = {}) {
@@ -373,6 +394,53 @@ function proxyStatusChip(status) {
   return '<span class="chip warn">не проверен</span>';
 }
 
+function sessionStatusChip(account) {
+  if (!account) return '<span class="chip muted">нет данных</span>';
+  if (!account.is_active) return '<span class="chip danger">неактивен</span>';
+  if (account.session_ready) return '<span class="chip ok">готова</span>';
+  if (account.format === "tdata") return '<span class="chip warn">нужна конвертация</span>';
+  return '<span class="chip muted">без .session</span>';
+}
+
+function buildSummaryCard(label, value, note) {
+  return `
+    <div class="summary-card">
+      <span class="summary-label">${escapeHtml(label)}</span>
+      <strong class="summary-value">${escapeHtml(String(value))}</strong>
+      <span class="summary-note">${escapeHtml(note)}</span>
+    </div>`;
+}
+
+function renderAccountsSummary() {
+  const el = $("#accountsSummary");
+  if (!el) return;
+  const total = accountsCache.length;
+  const ready = accountsCache.filter((a) => a.session_ready).length;
+  const withProxy = accountsCache.filter((a) => a.proxy).length;
+  const issues = accountsCache.filter((a) => !a.is_active || (a.format === "tdata" && !a.session_ready) || !a.proxy).length;
+  el.innerHTML = [
+    buildSummaryCard("Всего сессий", total, `${ready} готовы к работе`),
+    buildSummaryCard("С прокси", withProxy, `${Math.max(total - withProxy, 0)} без привязки`),
+    buildSummaryCard("Выбрано", selectedForRun.size, total ? `из ${total} аккаунтов` : "ничего не отмечено"),
+    buildSummaryCard("Требуют внимания", issues, issues ? "неактивны, без proxy или без .session" : "критичных проблем не видно"),
+  ].join("");
+}
+
+function renderProxySummary() {
+  const el = $("#proxySummary");
+  if (!el) return;
+  const total = proxyPoolCache.length;
+  const ok = proxyPoolCache.filter((p) => p.status === "ok").length;
+  const dead = proxyPoolCache.filter((p) => p.status === "dead").length;
+  const free = proxyPoolCache.filter((p) => !p.accounts_count && p.status === "ok").length;
+  el.innerHTML = [
+    buildSummaryCard("Всего прокси", total, `${ok} рабочих в пуле`),
+    buildSummaryCard("Свободные", free, "можно быстро раздать аккаунтам"),
+    buildSummaryCard("Выбрано", selectedProxies.size, total ? `из ${total} прокси` : "ничего не отмечено"),
+    buildSummaryCard("Проблемные", dead, dead ? "стоит перепроверить или удалить" : "битых не найдено"),
+  ].join("");
+}
+
 function proxyPoolSelectable(p) {
   return p.status !== "dead";
 }
@@ -398,17 +466,107 @@ function fillProxyPoolSelect(selectedId) {
   $("#btnSaveProxy").disabled = !selectedAccount;
 }
 
+function renderSessionDetail() {
+  const labelEl = $("#proxyAccountLabel");
+  const badgeEl = $("#sessionDetailBadge");
+  const metaEl = $("#sessionDetailMeta");
+  const listEl = $("#sessionDetailList");
+  if (!labelEl || !badgeEl || !metaEl || !listEl) return;
+
+  const acc = accountsCache.find((a) => a.id === selectedAccount);
+  if (!acc) {
+    labelEl.textContent = "Выберите аккаунт в таблице";
+    badgeEl.className = "chip muted";
+    badgeEl.textContent = "нет выбора";
+    metaEl.innerHTML = '<span class="chip muted">Ожидание выбора</span>';
+    listEl.innerHTML = '<div><dt>Статус</dt><dd class="detail-empty">Список появится после выбора строки.</dd></div>';
+    fillProxyPoolSelect("");
+    return;
+  }
+
+  labelEl.textContent = `Аккаунт: ${acc.id}`;
+  badgeEl.className = "chip";
+  badgeEl.textContent = acc.role || (acc.is_assistant ? "ассистент" : "сессия");
+  metaEl.innerHTML = [
+    sessionStatusChip(acc),
+    acc.proxy ? `<span class="chip">${safeText(acc.proxy)}</span>` : '<span class="chip muted">без прокси</span>',
+    acc.format === "tdata" ? '<span class="chip warn">tdata</span>' : '<span class="chip">.session</span>',
+    acc.outreach_eligible ? '<span class="chip ok">в рассылке</span>' : '<span class="chip muted">не для рассылки</span>',
+  ].join("");
+  listEl.innerHTML = `
+    <div><dt>ID</dt><dd>${safeText(acc.id)}</dd></div>
+    <div><dt>Готовность</dt><dd>${acc.session_ready ? `Рабочий файл: ${safeText(acc.session_file || ".session")}` : "Нужна конвертация или повторный логин"}</dd></div>
+    <div><dt>Прокси</dt><dd>${acc.proxy ? safeText(acc.proxy) : "Не привязан"}</dd></div>
+    <div><dt>Роль</dt><dd>${safeText(acc.role || (acc.is_assistant ? acc.assistant_name || "ассистент" : "не задана"))}</dd></div>
+    <div><dt>Флаги</dt><dd>${[
+      acc.is_active ? "активен" : "неактивен",
+      acc.twofa_file ? `2FA: ${acc.twofa_file}` : "без 2FA файла",
+      acc.is_duplicate ? "дубль" : "основная запись",
+    ].map((x) => safeText(x)).join(" · ")}</dd></div>`;
+  fillProxyPoolSelect(acc.proxy_id || "");
+}
+
+function renderProxyDetail() {
+  const titleEl = $("#proxyDetailTitle");
+  const badgeEl = $("#proxyDetailBadge");
+  const metaEl = $("#proxyDetailMeta");
+  const listEl = $("#proxyDetailList");
+  const accountsEl = $("#proxyDetailAccounts");
+  const recheckBtn = $("#btnProxyDetailRecheck");
+  const deleteBtn = $("#btnProxyDetailDelete");
+  if (!titleEl || !badgeEl || !metaEl || !listEl || !accountsEl) return;
+
+  const proxy = proxyPoolCache.find((p) => p.id === selectedProxyId);
+  if (!proxy) {
+    titleEl.textContent = "Карточка прокси";
+    badgeEl.className = "chip muted";
+    badgeEl.textContent = "нет выбора";
+    metaEl.innerHTML = '<span class="chip muted">Выберите строку в таблице</span>';
+    listEl.innerHTML = '<div><dt>Статус</dt><dd class="detail-empty">Здесь появится информация о пинге, стране и привязках.</dd></div>';
+    accountsEl.innerHTML = '<span class="chip muted">Нет выбранного прокси</span>';
+    if (recheckBtn) recheckBtn.disabled = true;
+    if (deleteBtn) deleteBtn.disabled = true;
+    return;
+  }
+
+  titleEl.textContent = proxy.label || `${proxy.host}:${proxy.port}`;
+  badgeEl.className = "chip";
+  badgeEl.textContent = proxy.type || "proxy";
+  metaEl.innerHTML = [
+    proxyStatusChip(proxy.status),
+    proxy.country_label ? `<span class="chip">${safeText(proxy.country_label)}</span>` : '<span class="chip muted">страна ?</span>',
+    proxy.accounts_count ? `<span class="chip ok">аккаунтов: ${proxy.accounts_count}</span>` : '<span class="chip muted">свободен</span>',
+  ].join("");
+  listEl.innerHTML = `
+    <div><dt>Адрес</dt><dd>${safeText(proxy.host)}:${safeText(proxy.port)}</dd></div>
+    <div><dt>Пинг</dt><dd>${formatLatency(proxy.latency_ms)}</dd></div>
+    <div><dt>Проверка</dt><dd>${formatDateTime(proxy.checked_at)}</dd></div>
+    <div><dt>Выходной IP</dt><dd>${safeText(proxy.exit_ip)}</dd></div>
+    <div><dt>Ошибка</dt><dd>${safeText(proxy.last_error || "нет")}</dd></div>`;
+  accountsEl.innerHTML = proxy.accounts_count
+    ? `<div class="detail-account-list">${(proxy.accounts || []).map((a) => `<span class="chip">${safeText(a)}</span>`).join("")}</div>`
+    : '<span class="chip muted">Пока никому не назначен</span>';
+  if (recheckBtn) recheckBtn.disabled = false;
+  if (deleteBtn) deleteBtn.disabled = false;
+}
+
+function selectProxy(id) {
+  selectedProxyId = id;
+  renderProxyPoolTable();
+  renderProxyDetail();
+}
+
 async function loadProxyPool() {
   initProxyFilterUi();
   const data = await api("/api/proxy-pool");
   proxyPoolCache = data.items || [];
-  renderProxyPoolTable();
-  if (selectedAccount) {
-    const acc = accountsCache.find((a) => a.id === selectedAccount);
-    fillProxyPoolSelect(acc?.proxy_id || "");
-  } else {
-    fillProxyPoolSelect("");
+  if (selectedProxyId && !proxyPoolCache.find((p) => p.id === selectedProxyId)) {
+    selectedProxyId = null;
   }
+  renderProxySummary();
+  renderProxyPoolTable();
+  renderProxyDetail();
+  renderSessionDetail();
 }
 
 function renderProxyPoolTable() {
@@ -427,7 +585,8 @@ function renderProxyPoolTable() {
     const accounts = (p.accounts || []).map((a) => escapeHtml(a)).join(", ");
     const ping = p.latency_ms ? `${p.latency_ms} ms` : "—";
     const checked = selectedProxies.has(p.id) ? "checked" : "";
-    return `<tr class="${p.status === "dead" ? "row-inactive" : ""}${selectedProxies.has(p.id) ? " selected" : ""}">
+    const selected = p.id === selectedProxyId;
+    return `<tr data-proxy-id="${escapeHtml(p.id)}" class="${p.status === "dead" ? "row-inactive" : ""}${selectedProxies.has(p.id) || selected ? " selected" : ""}">
       <td><input type="checkbox" class="proxy-chk" data-id="${escapeHtml(p.id)}" ${checked}></td>
       <td><strong>${escapeHtml(p.label || `${p.host}:${p.port}`)}</strong><br><span class="hint">${escapeHtml(p.type)} · ${escapeHtml(p.exit_ip || "—")}</span></td>
       <td>${p.country_label ? escapeHtml(p.country_label) : '<span class="chip muted">?</span>'}${p.country ? `<br><span class="hint">${escapeHtml(p.country)}</span>` : ""}</td>
@@ -447,7 +606,16 @@ function renderProxyPoolTable() {
       if (ev.target.checked) selectedProxies.add(id);
       else selectedProxies.delete(id);
       updateProxySelectionUi();
-      el.closest("tr")?.classList.toggle("selected", ev.target.checked);
+      const isSelected = el.closest("tr")?.dataset.proxyId === selectedProxyId;
+      el.closest("tr")?.classList.toggle("selected", ev.target.checked || isSelected);
+      renderProxySummary();
+    };
+  });
+
+  tbody.querySelectorAll("tr[data-proxy-id]").forEach((tr) => {
+    tr.onclick = (ev) => {
+      if (ev.target.closest("button") || ev.target.closest("input")) return;
+      selectProxy(tr.dataset.proxyId);
     };
   });
 
@@ -501,9 +669,20 @@ async function loadAccounts() {
   }
   const rows = await api("/api/accounts");
   accountsCache = rows;
+  if (selectedAccount && !accountsCache.find((a) => a.id === selectedAccount)) {
+    selectedAccount = null;
+  }
   initAccountFilterUi();
-  const visible = accountsMatchingView(rows);
+  renderAccountsSummary();
+  renderAccountsTable();
+  renderSessionDetail();
+  try { renderGroupChatAccounts(); } catch (_) {}
+}
+
+function renderAccountsTable() {
+  const visible = accountsMatchingView(accountsCache);
   const tbody = $("#accountsTable");
+  if (!tbody) return;
   tbody.innerHTML = "";
   if (!visible.length) {
     const msg = accountViewFilters.size
@@ -520,51 +699,44 @@ async function loadAccounts() {
     if (a.is_assistant) tr.classList.add("row-assistant");
     const checked = selectedForRun.has(a.id) ? "checked" : "";
     const canSelect = a.outreach_eligible;
-    const twofaHint = a.twofa_file ? ` · 2FA: ${a.twofa_file}` : "";
-    const typeChip = a.format === "tdata"
-      ? '<span class="chip warn">tdata</span>'
-      : '<span class="chip">session</span>';
-    const sessionChip = a.session_ready
-      ? `<span class="chip ok">${escapeHtml(a.session_file || "готов")}</span>`
-      : (a.format === "tdata" ? '<span class="chip warn">нет</span>' : '<span class="chip muted">—</span>');
-    const dupHint = a.is_duplicate ? ' <span class="chip warn">дубль</span>' : "";
     const assistantChip = a.is_assistant
       ? `<span class="chip violet" title="Только AI-агент">ассистент${a.assistant_name ? `: ${escapeHtml(a.assistant_name)}` : ""}</span>`
       : "";
-    const inactiveChip = !a.is_active ? '<span class="chip danger">неактивен</span>' : "";
-    const proxyCell = proxyPoolCache.length
-      ? `<select class="proxy-bind-select assign-select" data-id="${escapeHtml(a.id)}" onclick="event.stopPropagation()">${proxySelectOptions(a.proxy_id || "")}</select>`
-      : (a.proxy ? `<span class="chip">${escapeHtml(a.proxy)}</span>` : '<span class="chip muted">—</span>');
+    const readiness = [
+      sessionStatusChip(a),
+      a.format === "tdata" ? '<span class="chip warn">tdata</span>' : '<span class="chip">.session</span>',
+      a.session_ready ? `<span class="hint">${escapeHtml(a.session_file || "файл готов")}</span>` : '<span class="hint">нужно проверить логин</span>',
+    ].join("<br>");
+    const proxyCell = a.proxy
+      ? `<span class="chip">${escapeHtml(a.proxy)}</span>`
+      : '<span class="chip muted">без прокси</span>';
+    const roleCell = a.role
+      ? `<span class="chip">${escapeHtml(a.role)}</span>`
+      : (a.is_assistant ? `<span class="chip violet">${escapeHtml(a.assistant_name || "ассистент")}</span>` : '<span class="chip muted">—</span>');
+    const flags = [
+      a.outreach_eligible ? '<span class="chip ok">в рассылке</span>' : '<span class="chip muted">исключён</span>',
+      a.twofa_file ? '<span class="chip">2FA</span>' : "",
+      a.is_duplicate ? '<span class="chip warn">дубль</span>' : "",
+      !a.is_active ? '<span class="chip danger">неактивен</span>' : "",
+    ].filter(Boolean).join(" ");
     tr.innerHTML = `
       <td><input type="checkbox" class="acc-chk" data-id="${escapeHtml(a.id)}" ${checked} ${canSelect ? "" : "disabled"} onclick="event.stopPropagation()"></td>
-      <td><strong>${escapeHtml(a.id)}</strong> ${assistantChip} ${inactiveChip} ${dupHint}${twofaHint ? `<span class="hint">${escapeHtml(twofaHint)}</span>` : ""}</td>
-      <td>${typeChip}</td>
-      <td>${sessionChip}</td>
+      <td><strong>${escapeHtml(a.id)}</strong><br>${assistantChip || '<span class="hint">обычная сессия</span>'}</td>
+      <td>${readiness}</td>
       <td>${proxyCell}</td>
-      <td>${a.role ? escapeHtml(a.role) : '<span class="chip muted">—</span>'}</td>`;
+      <td>${roleCell}</td>
+      <td>${flags || '<span class="chip muted">—</span>'}</td>`;
     tr.onclick = () => selectAccount(a.id);
     tbody.appendChild(tr);
-    const proxySel = tr.querySelector(".proxy-bind-select");
-    if (proxySel) {
-      proxySel.onchange = async (ev) => {
-        ev.stopPropagation();
-        try {
-          await bindAccountProxy(a.id, ev.target.value || null);
-        } catch (e) {
-          alert(e.message);
-          loadAccounts();
-        }
-      };
-    }
     tr.querySelector("input").onchange = (ev) => {
       if (ev.target.checked) selectedForRun.add(a.id);
       else selectedForRun.delete(a.id);
       updateAccountsSelectionUi();
+      renderAccountsSummary();
     };
   });
   purgeIneligibleSelection();
   updateAccountsSelectionUi();
-  try { renderGroupChatAccounts(); } catch (_) {}
 }
 
 function purgeIneligibleSelection() {
@@ -702,6 +874,7 @@ function updateAccountsSelectionUi() {
   }
 
   updateAccountFilterCounts();
+  renderAccountsSummary();
 }
 
 function setAccountSelection(ids) {
@@ -727,10 +900,9 @@ $("#btnClearAccountSelection")?.addEventListener("click", () => {
 
 async function selectAccount(id) {
   selectedAccount = id;
-  $("#proxyAccountLabel").textContent = `Аккаунт: ${id}`;
   const acc = accountsCache.find((a) => a.id === id);
-  fillProxyPoolSelect(acc?.proxy_id || "");
-  loadAccounts();
+  renderAccountsTable();
+  renderSessionDetail();
   try {
     const p = await api(`/api/accounts/${encodeURIComponent(id)}/proxy`);
     if ($("#proxyPoolSelect") && p.proxy_id) $("#proxyPoolSelect").value = p.proxy_id;
@@ -739,6 +911,9 @@ async function selectAccount(id) {
     $("#proxyPort").value = p.port || "";
     $("#proxyUser").value = p.username || "";
     $("#proxyPass").value = p.password || "";
+    if (p.proxy_id && !acc?.proxy_id) {
+      fillProxyPoolSelect(p.proxy_id);
+    }
   } catch (_) {}
 }
 
@@ -1075,6 +1250,37 @@ $("#btnRefreshProxyPool").onclick = async () => {
   await loadProxyPool();
   loadAccounts();
 };
+
+$("#btnProxyDetailRecheck")?.addEventListener("click", async () => {
+  if (!selectedProxyId) return;
+  try {
+    await api(`/api/proxy-pool/${encodeURIComponent(selectedProxyId)}/recheck`, { method: "POST" });
+    await loadProxyPool();
+    loadAccounts();
+    refreshStatus();
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+$("#btnProxyDetailDelete")?.addEventListener("click", async () => {
+  if (!selectedProxyId) return;
+  const item = proxyPoolCache.find((p) => p.id === selectedProxyId);
+  const force = item?.accounts_count
+    ? confirm(`Прокси привязан к ${item.accounts_count} акк. Удалить и отвязать?`)
+    : confirm("Удалить прокси из пула?");
+  if (!force) return;
+  try {
+    await api(`/api/proxy-pool/${encodeURIComponent(selectedProxyId)}?unbind=true`, { method: "DELETE" });
+    selectedProxies.delete(selectedProxyId);
+    selectedProxyId = null;
+    await loadProxyPool();
+    loadAccounts();
+    refreshStatus();
+  } catch (e) {
+    alert(e.message);
+  }
+});
 
 let roleGroupsData = [];
 let roleAssignments = {};
@@ -1560,55 +1766,328 @@ const GROUP_CHAT_SETTING_FIELDS = [
   "history_limit", "split_long_messages", "split_at_chars", "split_parts_max",
 ];
 
+const GROUP_CHAT_PRESETS = {
+  natural: {
+    online_probability: 0.55,
+    burst_min: 1,
+    burst_max: 3,
+    delay_between_speakers_min_sec: 25,
+    delay_between_speakers_max_sec: 120,
+    delay_within_burst_min_sec: 3,
+    delay_within_burst_max_sec: 12,
+    short_reply_chance: 0.35,
+    read_and_wait_chance: 0.25,
+    reply_style: "mixed",
+  },
+  calm: {
+    online_probability: 0.42,
+    burst_min: 1,
+    burst_max: 2,
+    delay_between_speakers_min_sec: 60,
+    delay_between_speakers_max_sec: 220,
+    delay_within_burst_min_sec: 6,
+    delay_within_burst_max_sec: 18,
+    short_reply_chance: 0.22,
+    read_and_wait_chance: 0.4,
+    reply_style: "medium",
+  },
+  active: {
+    online_probability: 0.72,
+    burst_min: 2,
+    burst_max: 4,
+    delay_between_speakers_min_sec: 12,
+    delay_between_speakers_max_sec: 70,
+    delay_within_burst_min_sec: 2,
+    delay_within_burst_max_sec: 8,
+    short_reply_chance: 0.48,
+    read_and_wait_chance: 0.14,
+    reply_style: "short",
+  },
+};
+
+let groupChatPreset = "natural";
+let groupChatWeightOverrides = new Map();
+let groupChatRoleDrafts = new Map();
+
+function groupChatEligibleAccounts() {
+  return (accountsCache || []).filter((a) => a.is_active !== false);
+}
+
+function groupChatSelectedAccounts() {
+  return groupChatEligibleAccounts().filter((a) => selectedGroupChatAccounts.has(a.id));
+}
+
+function snapshotGroupChatDrafts() {
+  document.querySelectorAll(".gc-weight").forEach((input) => {
+    const id = input.dataset.gcId;
+    if (!id) return;
+    const value = Number(input.value || 1);
+    groupChatWeightOverrides.set(id, Number.isFinite(value) && value > 0 ? value : 1);
+  });
+  document.querySelectorAll("[data-gc-role]").forEach((box) => {
+    const id = box.dataset.gcRole;
+    if (!id) return;
+    groupChatRoleDrafts.set(id, {
+      role_name: box.querySelector(".gc-role-name")?.value?.trim() || "",
+      role_prompt: box.querySelector(".gc-role-prompt")?.value?.trim() || "",
+    });
+  });
+}
+
+function setGroupChatPresetUi(name) {
+  groupChatPreset = name;
+  $$(".gc-preset").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.preset === name);
+  });
+}
+
+function applyGroupChatPreset(name) {
+  const preset = GROUP_CHAT_PRESETS[name];
+  if (!preset) return;
+  Object.entries(preset).forEach(([key, value]) => {
+    const el = $(`#gc_${key}`);
+    if (el) el.value = value;
+  });
+  setGroupChatPresetUi(name);
+}
+
+function updateGroupChatSelectionSummary() {
+  const eligible = groupChatEligibleAccounts();
+  const selected = groupChatSelectedAccounts();
+  $("#groupChatSummaryAccounts").textContent = `${selected.length} из ${eligible.length}`;
+  $("#groupChatSummaryAccountsNote").textContent = selected.length < 2
+    ? "Нужно минимум 2 участника для запуска."
+    : selected.length <= 6
+      ? "Хороший состав для живого и управляемого разговора."
+      : "Состав большой: следите за темпом и лимитами.";
+  $("#groupChatSelectionHint").textContent = selected.length
+    ? `Выбрано ${selected.length} аккаунтов. Готовые роли и веса можно править прямо в карточках ниже.`
+    : "Нужно минимум 2 аккаунта. Для естественного разговора рекомендуем 3-6 участников.";
+}
+
+function renderGroupChatVenuePreview() {
+  const chatId = Number($("#groupChatSelect")?.value || 0);
+  const chat = groupChatCommonCache.find((item) => Number(item.chat_id) === chatId);
+  const meta = $("#groupChatVenueMeta");
+  if (!chat) {
+    $("#groupChatSummaryVenue").textContent = "Не выбрана";
+    $("#groupChatSummaryVenueNote").textContent = "Сначала найдите общие чаты между аккаунтами.";
+    if (meta) {
+      meta.innerHTML = "<strong>Площадка не выбрана</strong><span>После поиска здесь покажем тип, id и состав чата.</span>";
+    }
+    return;
+  }
+  $("#groupChatSummaryVenue").textContent = chat.title || `Chat ${chat.chat_id}`;
+  $("#groupChatSummaryVenueNote").textContent = `${chat.kind || "group"} · id ${chat.chat_id}`;
+  if (meta) {
+    meta.innerHTML = `
+      <strong>${escapeHtml(chat.title || `Chat ${chat.chat_id}`)}</strong>
+      <span>${escapeHtml(chat.kind || "group")} · id ${chat.chat_id}</span>
+    `;
+  }
+}
+
 function renderGroupChatAccounts() {
-  const tbody = $("#groupChatAccountsTable");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-  const rows = (accountsCache || []).filter((a) => a.is_active !== false);
+  snapshotGroupChatDrafts();
+  const grid = $("#groupChatAccountsGrid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  const rows = groupChatEligibleAccounts();
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="hint">Нет аккаунтов — добавьте сессии</td></tr>';
+    grid.innerHTML = '<p class="hint">Нет аккаунтов — сначала добавьте и активируйте сессии.</p>';
+    updateGroupChatSelectionSummary();
     return;
   }
   rows.forEach((a) => {
-    const role = roleAssignments[a.id] || "—";
-    const checked = selectedGroupChatAccounts.has(a.id) ? "checked" : "";
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td><input type="checkbox" data-gc-id="${escapeHtml(a.id)}" ${checked}></td>
-      <td><strong>${escapeHtml(a.id)}</strong></td>
-      <td><span class="chip">${escapeHtml(role)}</span></td>
-      <td><input type="number" class="gc-weight" data-gc-id="${escapeHtml(a.id)}" value="1" min="0.1" step="0.1" style="width:4.5rem"></td>`;
-    tbody.appendChild(tr);
-    tr.querySelector("input[type=checkbox]").onchange = (ev) => {
+    const role = roleAssignments[a.id] || "Без роли";
+    const checked = selectedGroupChatAccounts.has(a.id);
+    const weight = groupChatWeightOverrides.get(a.id) || 1;
+    const card = document.createElement("article");
+    card.className = "group-chat-account-card";
+    card.innerHTML = `
+      <div class="group-chat-account-head">
+        <label class="inline-check">
+          <input type="checkbox" data-gc-id="${escapeHtml(a.id)}" ${checked ? "checked" : ""}>
+          <strong>${escapeHtml(a.id)}</strong>
+        </label>
+        <span class="chip ${checked ? "ok" : "muted"}">${checked ? "В составе" : "Не выбран"}</span>
+      </div>
+      <div class="detail-badges">
+        <span class="chip">${escapeHtml(role)}</span>
+        <span class="chip ${a.session_ready ? "ok" : "warn"}">${a.session_ready ? "Сессия ok" : "Нужен вход"}</span>
+        <span class="chip ${a.proxy_id || a.proxy ? "" : "muted"}">${escapeHtml(safeText(a.proxy_id || a.proxy, "Без прокси"))}</span>
+      </div>
+      <div class="group-chat-account-meta">
+        <span>${escapeHtml(safeText(a.assistant_name || (a.is_assistant ? "Ассистент" : ""), a.outreach_eligible ? "Готов к работе" : "Не участвует в outreach"))}</span>
+        <span>${escapeHtml(safeText(a.role, "Роль аккаунта не задана"))}</span>
+      </div>
+      <div class="group-chat-weight-row">
+        <label class="label">Вес активности</label>
+        <input type="number" class="gc-weight" data-gc-id="${escapeHtml(a.id)}" value="${weight}" min="0.1" step="0.1">
+      </div>`;
+    grid.appendChild(card);
+    card.querySelector("input[type=checkbox]").onchange = (ev) => {
       if (ev.target.checked) selectedGroupChatAccounts.add(a.id);
       else selectedGroupChatAccounts.delete(a.id);
+      renderGroupChatAccounts();
       renderGroupChatRoleOverrides();
+      updateGroupChatSelectionSummary();
+    };
+    card.querySelector(".gc-weight").oninput = (ev) => {
+      const value = Number(ev.target.value || 1);
+      groupChatWeightOverrides.set(a.id, Number.isFinite(value) && value > 0 ? value : 1);
     };
   });
   renderGroupChatRoleOverrides();
+  updateGroupChatSelectionSummary();
 }
 
 function renderGroupChatRoleOverrides() {
+  snapshotGroupChatDrafts();
   const box = $("#groupChatRolesBox");
   if (!box) return;
-  const ids = [...selectedGroupChatAccounts];
+  const ids = groupChatSelectedAccounts().map((item) => item.id);
   if (ids.length < 2) {
-    box.innerHTML = '<p class="hint">Выберите минимум 2 аккаунта, чтобы задать роли.</p>';
+    box.innerHTML = '<p class="hint">Выберите минимум 2 аккаунта, чтобы задать им роли в сцене.</p>';
     return;
   }
   box.innerHTML = ids.map((id) => {
-    const group = roleAssignments[id] || "";
-    const g = (roleGroupsData || []).find((x) => x.name === group);
-    const prompt = g?.role_prompt || "";
+    const draft = groupChatRoleDrafts.get(id);
+    const group = draft?.role_name || roleAssignments[id] || "";
+    const roleGroup = (roleGroupsData || []).find((x) => x.name === (roleAssignments[id] || ""));
+    const prompt = draft?.role_prompt || roleGroup?.role_prompt || "";
     return `
-      <div class="card" style="margin:0.75rem 0;padding:0.75rem" data-gc-role="${escapeHtml(id)}">
-        <strong>${escapeHtml(id)}</strong>
+      <div class="group-chat-role-card" data-gc-role="${escapeHtml(id)}">
+        <div class="section-block-heading">
+          <div>
+            <h3>${escapeHtml(id)}</h3>
+            <p class="hint">Можно взять готовую роль из матрицы и уточнить её под конкретную сцену.</p>
+          </div>
+        </div>
         <label class="label">Имя роли</label>
         <input type="text" class="gc-role-name" value="${escapeHtml(group || "участник")}">
         <label class="label">Промпт роли (можно переопределить)</label>
         <textarea class="gc-role-prompt" rows="3">${escapeHtml(prompt)}</textarea>
       </div>`;
   }).join("");
+}
+
+function renderGroupChatParticipants(st) {
+  const box = $("#groupChatParticipants");
+  if (!box) return;
+  const participants = Array.isArray(st.participants) ? st.participants : [];
+  if (!participants.length) {
+    box.innerHTML = '<p class="detail-empty">После запуска здесь появятся участники, роли и текущая нагрузка.</p>';
+    return;
+  }
+  box.innerHTML = participants.map((item) => `
+    <div class="group-chat-participant">
+      <div>
+        <strong>${escapeHtml(item.account_id)}</strong>
+        <div class="hint">${escapeHtml(safeText(item.role_name, "Участник"))}</div>
+      </div>
+      <div class="detail-badges">
+        <span class="chip ${item.running ? "ok" : "muted"}">${item.running ? "Онлайн" : "Ждёт"}</span>
+        <span class="chip">вес ${safeText(item.weight, 1)}</span>
+      </div>
+    </div>
+  `).join("");
+}
+
+function renderGroupChatLeaderboard(st) {
+  const box = $("#groupChatLeaderboard");
+  if (!box) return;
+  const participants = Array.isArray(st.participants) ? [...st.participants] : [];
+  if (!participants.length) {
+    box.innerHTML = '<p class="detail-empty">Пока нет данных по активности.</p>';
+    return;
+  }
+  participants.sort((a, b) => (b.session_count || 0) - (a.session_count || 0));
+  box.innerHTML = participants.map((item) => `
+    <div class="group-chat-metric-row">
+      <strong>${escapeHtml(item.account_id)}</strong>
+      <span>${item.session_count || 0} за сессию · ${item.day_count || 0} за день</span>
+    </div>
+  `).join("");
+}
+
+function renderGroupChatLog(st) {
+  const log = $("#groupChatLog");
+  if (!log) return;
+  const items = Array.isArray(st.recent_messages) ? st.recent_messages : [];
+  if (!items.length) {
+    log.innerHTML = '<p class="detail-empty">Журнал пока пуст. После старта здесь появятся последние реплики.</p>';
+    return;
+  }
+  log.innerHTML = items.slice(-14).reverse().map((m) => `
+    <article class="group-chat-log-item">
+      <div class="group-chat-log-head">
+        <strong>${escapeHtml(safeText(m.speaker_name || m.speaker_account_id, "Участник"))}</strong>
+        <span>${escapeHtml(safeText(m.ts || m.created_at, ""))}</span>
+      </div>
+      <div class="group-chat-log-body">${escapeHtml(safeText(m.text, ""))}</div>
+    </article>
+  `).join("");
+}
+
+function applyGroupChatStatus(st) {
+  const chip = $("#groupChatStats");
+  const running = !!st.running;
+  const paused = !!st.paused_schedule;
+  const statusText = st.status_text || (running ? "Диалог в работе" : "Ожидание запуска");
+  if (chip) {
+    chip.className = `chip ${running ? (paused ? "warn" : "ok") : "muted"}`;
+    chip.textContent = running ? (paused ? "Пауза по расписанию" : "Онлайн") : "Остановлен";
+  }
+  $("#groupChatSummaryStatus").textContent = running ? (paused ? "Пауза" : "В эфире") : "Остановлен";
+  $("#groupChatSummaryStatusNote").textContent = statusText;
+  $("#groupChatSummaryVolume").textContent = `${st.messages_sent || 0} сообщений`;
+  $("#groupChatSummaryVolumeNote").textContent = `За день: ${st.group_day_count || 0} · Активных: ${(st.running_accounts || []).length}`;
+  $("#groupChatLiveStats").textContent = running
+    ? `${statusText} · отправлено: ${st.messages_sent || 0} · за день: ${st.group_day_count || 0}`
+    : statusText;
+  $("#groupChatDetailStatus").textContent = running ? (paused ? "Пауза по расписанию" : "Разговор идёт") : "Сцена не запущена";
+  $("#groupChatDetailChat").textContent = safeText(st.chat_title || st.chat_id, "Не выбран");
+  $("#groupChatDetailTopic").textContent = safeText(st.topic, "Тема не задана");
+  $("#groupChatDetailSpeaker").textContent = safeText(st.last_speaker, "Пока никто");
+  $("#groupChatDetailActivity").textContent = `${st.messages_sent || 0} сообщений за сессию · ${st.group_day_count || 0} за день`;
+  $("#groupChatMsg").textContent = statusText;
+  renderGroupChatParticipants(st);
+  renderGroupChatLeaderboard(st);
+  renderGroupChatLog(st);
+}
+
+function syncGroupChatFromStatus(st) {
+  if ((!$("#groupChatTopic").value || !$("#groupChatTopic").dataset.touched) && st.topic) {
+    $("#groupChatTopic").value = st.topic;
+  }
+  if ((!$("#groupChatExtra").value || !$("#groupChatExtra").dataset.touched) && st.extra_context) {
+    $("#groupChatExtra").value = st.extra_context;
+  }
+  if (Array.isArray(st.participants)) {
+    st.participants.forEach((item) => {
+      if (item.weight != null) groupChatWeightOverrides.set(item.account_id, item.weight);
+      groupChatRoleDrafts.set(item.account_id, {
+        role_name: item.role_name || roleAssignments[item.account_id] || "",
+        role_prompt: item.role_prompt || "",
+      });
+    });
+  }
+  if (Array.isArray(st.account_ids) && st.account_ids.length && !selectedGroupChatAccounts.size) {
+    st.account_ids.forEach((id) => selectedGroupChatAccounts.add(id));
+    renderGroupChatAccounts();
+  }
+  if (st.chat_id && $("#groupChatSelect")) {
+    const exists = [...$("#groupChatSelect").options].some((option) => Number(option.value) === Number(st.chat_id));
+    if (!exists) {
+      const option = document.createElement("option");
+      option.value = st.chat_id;
+      option.textContent = st.chat_title || `Chat ${st.chat_id}`;
+      $("#groupChatSelect").appendChild(option);
+    }
+    $("#groupChatSelect").value = String(st.chat_id);
+    renderGroupChatVenuePreview();
+  }
 }
 
 async function loadGroupChatSettings() {
@@ -1625,6 +2104,7 @@ async function loadGroupChatSettings() {
   if (win) win.value = JSON.stringify(s.activity_windows || [], null, 2);
   const stop = $("#gc_stop_keywords");
   if (stop) stop.value = Array.isArray(s.stop_keywords) ? s.stop_keywords.join(", ") : "";
+  setGroupChatPresetUi(groupChatPreset);
 }
 
 async function saveGroupChatSettings() {
@@ -1642,19 +2122,21 @@ async function saveGroupChatSettings() {
     payload.activity_windows = JSON.parse($("#gc_activity_windows").value || "[]");
   } catch (_) {
     $("#groupChatSettingsMsg").textContent = "Ошибка JSON в окнах активности";
-    return;
+    return false;
   }
   payload.stop_keywords = $("#gc_stop_keywords").value.split(",").map((x) => x.trim()).filter(Boolean);
   try {
     await api("/api/group-chat/settings", { method: "POST", body: JSON.stringify(payload) });
     $("#groupChatSettingsMsg").textContent = "Настройки сохранены";
+    return true;
   } catch (e) {
     $("#groupChatSettingsMsg").textContent = e.message;
+    return false;
   }
 }
 
 async function findCommonGroupChats() {
-  const ids = [...selectedGroupChatAccounts];
+  const ids = groupChatSelectedAccounts().map((item) => item.id);
   if (ids.length < 2) return alert("Выберите минимум 2 аккаунта");
   $("#groupChatMsg").textContent = "Ищем общие чаты...";
   try {
@@ -1667,11 +2149,13 @@ async function findCommonGroupChats() {
     if (!groupChatCommonCache.length) {
       sel.innerHTML = '<option value="">— общих чатов нет —</option>';
       $("#groupChatMsg").textContent = "Общих групп не найдено";
+      renderGroupChatVenuePreview();
       return;
     }
     sel.innerHTML = groupChatCommonCache.map((c) =>
       `<option value="${c.chat_id}">${escapeHtml(c.title)} (${c.kind}, ${c.chat_id})</option>`
     ).join("");
+    renderGroupChatVenuePreview();
     $("#groupChatMsg").textContent = `Найдено: ${groupChatCommonCache.length}`;
   } catch (e) {
     $("#groupChatMsg").textContent = e.message;
@@ -1681,32 +2165,13 @@ async function findCommonGroupChats() {
 
 async function refreshGroupChatStatus() {
   const st = await api("/api/group-chat/status");
-  const chip = $("#groupChatStats");
-  if (chip) {
-    if (st.running) {
-      chip.className = "chip ok";
-      chip.textContent = st.paused_schedule ? "Пауза (расписание)" : "Онлайн";
-    } else {
-      chip.className = "chip muted";
-      chip.textContent = "Остановлен";
-    }
-  }
-  const live = $("#groupChatLiveStats");
-  if (live) {
-    live.textContent = st.running
-      ? `${st.status_text || "работает"} · отправлено: ${st.messages_sent} · день: ${st.group_day_count}`
-      : (st.status_text || "Ожидание запуска");
-  }
-  const log = $("#groupChatLog");
-  if (log && Array.isArray(st.recent_messages)) {
-    log.textContent = st.recent_messages.map((m) =>
-      `${m.speaker_name || m.speaker_account_id}: ${m.text}`
-    ).join("\n");
-  }
+  applyGroupChatStatus(st);
+  syncGroupChatFromStatus(st);
 }
 
 async function startGroupChat() {
-  const ids = [...selectedGroupChatAccounts];
+  snapshotGroupChatDrafts();
+  const ids = groupChatSelectedAccounts().map((item) => item.id);
   if (ids.length < 2) return alert("Выберите минимум 2 аккаунта");
   const chatId = Number($("#groupChatSelect").value || 0);
   if (!chatId) return alert("Выберите общий чат");
@@ -1716,18 +2181,16 @@ async function startGroupChat() {
   const role_overrides = {};
   const activity_weights = {};
   ids.forEach((id) => {
-    const weightEl = document.querySelector(`.gc-weight[data-gc-id="${CSS.escape(id)}"]`);
-    activity_weights[id] = weightEl ? Number(weightEl.value || 1) : 1;
-    const box = document.querySelector(`[data-gc-role="${CSS.escape(id)}"]`);
-    if (box) {
-      role_overrides[id] = {
-        role_name: box.querySelector(".gc-role-name")?.value || "",
-        role_prompt: box.querySelector(".gc-role-prompt")?.value || "",
-      };
-    }
+    const draft = groupChatRoleDrafts.get(id) || {};
+    role_overrides[id] = {
+      role_name: draft.role_name || roleAssignments[id] || "участник",
+      role_prompt: draft.role_prompt || "",
+    };
+    activity_weights[id] = groupChatWeightOverrides.get(id) || 1;
   });
   try {
-    await saveGroupChatSettings();
+    const saved = await saveGroupChatSettings();
+    if (!saved) return;
     await api("/api/group-chat/start", {
       method: "POST",
       body: JSON.stringify({
@@ -1740,9 +2203,9 @@ async function startGroupChat() {
         activity_weights,
       }),
     });
-    $("#groupChatMsg").textContent = "Запущено";
-    refreshStatus();
-    refreshGroupChatStatus();
+    $("#groupChatMsg").textContent = "Сцена запущена";
+    await refreshStatus();
+    await refreshGroupChatStatus();
   } catch (e) {
     alert(e.message);
   }
@@ -1750,13 +2213,15 @@ async function startGroupChat() {
 
 async function stopGroupChat() {
   await api("/api/group-chat/stop", { method: "POST" });
-  refreshStatus();
-  refreshGroupChatStatus();
+  $("#groupChatMsg").textContent = "Сцена остановлена";
+  await refreshStatus();
+  await refreshGroupChatStatus();
 }
 
 async function loadGroupChat() {
   renderGroupChatAccounts();
   await loadGroupChatSettings();
+  renderGroupChatVenuePreview();
   await refreshGroupChatStatus();
 }
 
@@ -1764,7 +2229,33 @@ $("#btnFindCommonChats").onclick = findCommonGroupChats;
 $("#btnSaveGroupChatSettings").onclick = saveGroupChatSettings;
 $("#btnStartGroupChat").onclick = startGroupChat;
 $("#btnStopGroupChat").onclick = stopGroupChat;
-$("#btnRefreshGroupChat").onclick = () => { renderGroupChatAccounts(); refreshGroupChatStatus(); };
+$("#btnRefreshGroupChat").onclick = async () => {
+  renderGroupChatAccounts();
+  await refreshGroupChatStatus();
+};
+$("#groupChatSelect").onchange = renderGroupChatVenuePreview;
+$("#btnGroupChatSelectReady").onclick = () => {
+  selectedGroupChatAccounts = new Set(groupChatEligibleAccounts().filter((a) => a.session_ready).map((a) => a.id));
+  renderGroupChatAccounts();
+};
+$("#btnGroupChatSelectAll").onclick = () => {
+  selectedGroupChatAccounts = new Set(groupChatEligibleAccounts().map((a) => a.id));
+  renderGroupChatAccounts();
+};
+$("#btnGroupChatClearSelection").onclick = () => {
+  selectedGroupChatAccounts.clear();
+  renderGroupChatAccounts();
+};
+$$(".gc-preset").forEach((btn) => {
+  btn.onclick = () => applyGroupChatPreset(btn.dataset.preset);
+});
+["#groupChatTopic", "#groupChatExtra"].forEach((selector) => {
+  const el = $(selector);
+  if (!el) return;
+  el.addEventListener("input", () => {
+    el.dataset.touched = "1";
+  });
+});
 
 async function startEngine(resumeOnly) {
   try {
