@@ -15,16 +15,11 @@
       </div>
     </div>
 
-    <nav class="top-nav" id="tabNav">
-      <button type="button" class="nav-item active" data-tab="outreach">Рассылка</button>
-      <button type="button" class="nav-item" data-tab="connect">Подключение</button>
-      <button type="button" class="nav-item" data-tab="accounts">Аккаунты</button>
-      <button type="button" class="nav-item" data-tab="proxies">Прокси</button>
-      <button type="button" class="nav-item" data-tab="roles">Стиль</button>
-      <button type="button" class="nav-item" data-tab="dialogs">Переписки</button>
-      <button type="button" class="nav-item" data-tab="agents">AI Агент</button>
-      <button type="button" class="nav-item" data-tab="groupchat">Групповой чат</button>
-    </nav>
+    <div class="header-copy">
+      <span class="page-kicker">Telegram orchestration panel</span>
+      <strong id="pageTitle">Рассылка</strong>
+      <span id="pageLead">Первые сообщения новым контактам и автоматическое ведение диалогов с помощью AI.</span>
+    </div>
 
     <div class="header-meta">
       <span class="header-status" id="statusBar">загрузка...</span>
@@ -673,7 +668,42 @@
           </div>
         </div>
       </section>
-    </main>
+  </main>
+
+  <nav class="dock-nav" id="tabNav" aria-label="Основная навигация">
+    <button type="button" class="dock-item active" data-tab="outreach">
+      <span class="dock-icon">RS</span>
+      <span class="dock-label">Рассылка</span>
+    </button>
+    <button type="button" class="dock-item" data-tab="connect">
+      <span class="dock-icon">API</span>
+      <span class="dock-label">Подключение</span>
+    </button>
+    <button type="button" class="dock-item" data-tab="accounts">
+      <span class="dock-icon">ACC</span>
+      <span class="dock-label">Аккаунты</span>
+    </button>
+    <button type="button" class="dock-item" data-tab="proxies">
+      <span class="dock-icon">IP</span>
+      <span class="dock-label">Прокси</span>
+    </button>
+    <button type="button" class="dock-item" data-tab="roles">
+      <span class="dock-icon">RL</span>
+      <span class="dock-label">Стиль</span>
+    </button>
+    <button type="button" class="dock-item" data-tab="dialogs">
+      <span class="dock-icon">DM</span>
+      <span class="dock-label">Переписки</span>
+    </button>
+    <button type="button" class="dock-item" data-tab="agents">
+      <span class="dock-icon">AI</span>
+      <span class="dock-label">AI Агент</span>
+    </button>
+    <button type="button" class="dock-item" data-tab="groupchat">
+      <span class="dock-icon">GC</span>
+      <span class="dock-label">Групповой чат</span>
+    </button>
+  </nav>
 
   <!-- Modals -->
   <div class="modal hidden" id="dialogModal">
@@ -755,10 +785,10 @@
     </div>
   </div>
 
-  <script src="/static/js/01-core.js?v=6"></script>
-  <script src="/static/js/02-proxies.js?v=6"></script>
-  <script src="/static/js/03-accounts.js?v=6"></script>
-  <script src="/static/js/04-app.js?v=6"></script>
-  <script src="/static/js/99-boot.js?v=6"></script>
+  <script src="/static/js/01-core.js?v=7"></script>
+  <script src="/static/js/02-proxies.js?v=7"></script>
+  <script src="/static/js/03-accounts.js?v=7"></script>
+  <script src="/static/js/04-app.js?v=7"></script>
+  <script src="/static/js/99-boot.js?v=7"></script>
 </body>
 </html>

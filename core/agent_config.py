@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from core.json_store import read_json, write_json_atomic
 
 
 DEFAULT_SECRETARY_PROMPT = (
@@ -79,16 +80,12 @@ class AgentsConfig:
     def load(cls, path: Path) -> AgentsConfig:
         if not path.exists():
             return cls()
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = read_json(path, {})
         agents = [SecretaryAgent.from_dict(item) for item in data.get("agents", [])]
         return cls(agents=agents)
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps({"agents": [a.to_dict() for a in self.agents]}, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        write_json_atomic(path, {"agents": [a.to_dict() for a in self.agents]})
 
     def get(self, account_id: str) -> SecretaryAgent | None:
         for agent in self.agents:

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from core.json_store import read_json, write_json_atomic
 
 
 @dataclass
@@ -33,7 +34,7 @@ class DialogSettings:
     def load(cls, path: Path) -> DialogSettings:
         if not path.exists():
             return cls()
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = read_json(path, {})
         ignore = data.get("ignore_keywords", [])
         if isinstance(ignore, str):
             ignore = [x.strip() for x in ignore.split(",") if x.strip()]
@@ -59,33 +60,28 @@ class DialogSettings:
         )
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                {
-                    "history_for_grok": self.history_for_grok,
-                    "max_stored_messages": self.max_stored_messages,
-                    "grok_temperature": self.grok_temperature,
-                    "grok_max_tokens": self.grok_max_tokens,
-                    "reply_delay_min_sec": self.reply_delay_min_sec,
-                    "reply_delay_max_sec": self.reply_delay_max_sec,
-                    "typing_delay_sec": self.typing_delay_sec,
-                    "batch_messages_sec": self.batch_messages_sec,
-                    "min_user_message_chars": self.min_user_message_chars,
-                    "ignore_keywords": self.ignore_keywords,
-                    "global_extra_prompt": self.global_extra_prompt,
-                    "max_replies_per_dialog": self.max_replies_per_dialog,
-                    "max_replies_per_hour": self.max_replies_per_hour,
-                    "split_long_messages": self.split_long_messages,
-                    "split_at_chars": self.split_at_chars,
-                    "sync_history_on_resume": self.sync_history_on_resume,
-                    "sync_history_limit": self.sync_history_limit,
-                    "first_message_max_chars": self.first_message_max_chars,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        write_json_atomic(
+            path,
+            {
+                "history_for_grok": self.history_for_grok,
+                "max_stored_messages": self.max_stored_messages,
+                "grok_temperature": self.grok_temperature,
+                "grok_max_tokens": self.grok_max_tokens,
+                "reply_delay_min_sec": self.reply_delay_min_sec,
+                "reply_delay_max_sec": self.reply_delay_max_sec,
+                "typing_delay_sec": self.typing_delay_sec,
+                "batch_messages_sec": self.batch_messages_sec,
+                "min_user_message_chars": self.min_user_message_chars,
+                "ignore_keywords": self.ignore_keywords,
+                "global_extra_prompt": self.global_extra_prompt,
+                "max_replies_per_dialog": self.max_replies_per_dialog,
+                "max_replies_per_hour": self.max_replies_per_hour,
+                "split_long_messages": self.split_long_messages,
+                "split_at_chars": self.split_at_chars,
+                "sync_history_on_resume": self.sync_history_on_resume,
+                "sync_history_limit": self.sync_history_limit,
+                "first_message_max_chars": self.first_message_max_chars,
+            },
         )
 
     def to_dict(self) -> dict[str, Any]:

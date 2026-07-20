@@ -2,6 +2,19 @@
 @media (max-width: 900px) {
   .header-status { display: none; }
   .header-meta { max-width: none; }
+  .app-header { align-items: flex-start; }
+  .header-copy span:last-child { max-width: none; }
+  .dock-nav {
+    width: min(calc(100vw - 1rem), 100%);
+    bottom: 0.65rem;
+    padding: 0.65rem 0.7rem 0.75rem;
+    gap: 0.35rem;
+  }
+  .dock-item { min-width: 82px; }
+  .dock-icon {
+    width: 2.95rem;
+    height: 2.95rem;
+  }
 }
 
 @media (max-width: 640px) {
@@ -12,16 +25,31 @@
     gap: 0.5rem;
   }
 
-  .top-nav {
-    order: 3;
-    flex: 1 1 100%;
-    padding-bottom: 0.15rem;
-  }
-
   .content {
-    padding: 0.85rem;
+    padding: 0.85rem 0.85rem 8.5rem;
   }
 
   .brand-dev { display: none; }
   .brand-name { font-size: 0.82rem; }
+  .page-kicker { font-size: 0.62rem; }
+  .header-copy strong { font-size: 0.94rem; }
+  .header-copy span:last-child { font-size: 0.73rem; }
+  .dock-nav {
+    justify-content: flex-start;
+    border-radius: 24px;
+  }
+  .dock-item {
+    min-width: 76px;
+    gap: 0.28rem;
+  }
+  .dock-item:hover { transform: none; }
+  .dock-item.active .dock-icon {
+    transform: translateY(-4px) scale(1.04);
+  }
+  .dock-icon {
+    width: 2.7rem;
+    height: 2.7rem;
+    font-size: 0.68rem;
+  }
+  .dock-label { font-size: 0.66rem; }
 }

@@ -104,23 +104,7 @@ def wrap(body: str, head: str = "") -> str:
 BOOT_JS = """/* Kot_Teamlead boot */
 (function () {
   const P = window.Panel = window.Panel || {};
-  P.$$("#tabNav .nav-item").forEach((btn) => {
-    btn.addEventListener("click", () => P.showTab(btn.dataset.tab));
-  });
-  P.loadConfig();
-  P.loadProxyPool();
-  P.loadAccounts();
-  P.loadRoles();
-  P.loadDialogSettings();
-  P.loadDialogs();
-  P.loadAgents();
-  P.loadGroupChat();
-  P.refreshStatus();
-  setInterval(async () => {
-    await P.refreshStatus();
-    await P.refreshEngine();
-    await P.refreshLogs();
-  }, 1500);
+  P.bootstrap();
 })();
 """
 
@@ -129,20 +113,12 @@ def main() -> None:
     global ALL_FN_NAMES
     src = SRC.read_text(encoding="utf-8")
     ALL_FN_NAMES = set(re.findall(r"^(?:async )?function (\w+)", src, re.MULTILINE))
-    lines = src.splitlines(keepends=True)
-
-    def sl(a: int, b: int) -> str:
-        return "".join(lines[a - 1 : b])
 
     OUT.mkdir(parents=True, exist_ok=True)
-    files = {
-        "01-core.js": (sl(31, 34) + sl(40, 253), CORE_HEAD),
-        "02-proxies.js": (sl(255, 477) + sl(869, 1057), ""),
-        "03-accounts.js": (sl(478, 867), ""),
-        "04-app.js": (sl(1059, 1778), ""),
-    }
-    for name, (body, head) in files.items():
-        (OUT / name).write_text(wrap(body, head), encoding="utf-8")
+    (OUT / "01-core.js").write_text("/* Kot_Teamlead placeholder */\n", encoding="utf-8")
+    (OUT / "02-proxies.js").write_text("/* Kot_Teamlead placeholder */\n", encoding="utf-8")
+    (OUT / "03-accounts.js").write_text("/* Kot_Teamlead placeholder */\n", encoding="utf-8")
+    (OUT / "04-app.js").write_text(wrap(src, CORE_HEAD), encoding="utf-8")
 
     (OUT / "99-boot.js").write_text(BOOT_JS, encoding="utf-8")
 

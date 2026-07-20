@@ -27,15 +27,35 @@ async function api(path, opts = {}) {
   return data;
 }
 
-
-function showTab(name) {
-  $$("#tabNav .nav-item").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
-  $$(".panel").forEach((p) => p.classList.toggle("active", p.id === `panel-${name}`));
+function syncPageHeader(name) {
+  const panel = $(`#panel-${name}`);
+  const title = panel?.querySelector(".page-header h2")?.textContent?.trim() || "Панель";
+  const lead = panel?.querySelector(".page-header .lead")?.textContent?.trim() || "";
+  const titleEl = $("#pageTitle");
+  const leadEl = $("#pageLead");
+  if (titleEl) titleEl.textContent = title;
+  if (leadEl) leadEl.textContent = lead;
 }
 
-$$("#tabNav .nav-item").forEach((btn) => {
-  btn.addEventListener("click", () => showTab(btn.dataset.tab));
-});
+function showTab(name) {
+  $$("#tabNav [data-tab]").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+  $$(".panel").forEach((p) => p.classList.toggle("active", p.id === `panel-${name}`));
+  syncPageHeader(name);
+  try {
+    localStorage.setItem("panel.activeTab", name);
+  } catch (_) {}
+}
+
+function initNavigation() {
+  $$("#tabNav [data-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => showTab(btn.dataset.tab));
+  });
+  let initialTab = "outreach";
+  try {
+    initialTab = localStorage.getItem("panel.activeTab") || initialTab;
+  } catch (_) {}
+  showTab(initialTab);
+}
 
 let llmProviders = [];
 
@@ -1783,13 +1803,24 @@ async function tick() {
   await refreshLogs();
 }
 
-loadConfig();
-loadProxyPool();
-loadAccounts();
-loadRoles();
-loadDialogSettings();
-loadDialogs();
-loadAgents();
-loadGroupChat();
-refreshStatus();
-setInterval(tick, 1500);
+async function bootstrap() {
+  if (window.__panelBootStarted) return;
+  window.__panelBootStarted = true;
+  initNavigation();
+  await Promise.allSettled([
+    loadConfig(),
+    loadProxyPool(),
+    loadAccounts(),
+    loadRoles(),
+    loadDialogSettings(),
+    loadDialogs(),
+    loadAgents(),
+    loadGroupChat(),
+    refreshStatus(),
+  ]);
+  if (!window.__panelTickHandle) {
+    window.__panelTickHandle = setInterval(() => {
+      tick().catch(() => {});
+    }, 1500);
+  }
+}

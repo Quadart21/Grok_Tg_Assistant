@@ -1,6 +1,1101 @@
 /* Kot_Teamlead */
 (function () {
   const P = window.Panel = window.Panel || {};
+  P.$ = (sel) => document.querySelector(sel);
+  P.$$ = (sel) => document.querySelectorAll(sel);
+  P.escapeHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  P.api = async (path, opts = {}) => {
+    const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || r.statusText);
+    return data;
+  };
+  P.state = P.state || {
+    selectedAccount: null,
+    selectedForRun: new Set(),
+    accountsCache: [],
+    proxyPoolCache: [],
+    selectedProxies: new Set(),
+    proxyViewFilters: new Set(),
+    proxyFiltersInited: false,
+    selectedAgents: new Set(),
+    selectedGroupChatAccounts: new Set(),
+    groupChatCommonCache: [],
+    logOffset: 0,
+    llmProviders: [],
+    roleGroupsData: [],
+    roleAssignments: {},
+    roleGroupNames: [],
+    editingDialogKey: null,
+    editingAgentId: null,
+    currentDialogKey: null,
+    accountViewFilters: new Set(['outreach_eligible']),
+    accountFiltersInited: false,
+  };
+
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
+
+
+P.escapeHtml = function(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+P.api = async function(path, opts = {}) {
+  const r = await fetch(path, {
+    headers: { "Content-Type": "application/json" },
+    ...opts,
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+}
+
+P.syncPageHeader = function(name) {
+  const panel = P.$(`#panel-${name}`);
+  const title = panel?.querySelector(".page-header h2")?.textContent?.trim() || "Панель";
+  const lead = panel?.querySelector(".page-header .lead")?.textContent?.trim() || "";
+  const titleEl = P.$("#pageTitle");
+  const leadEl = P.$("#pageLead");
+  if (titleEl) titleEl.textContent = title;
+  if (leadEl) leadEl.textContent = lead;
+}
+
+P.showTab = function(name) {
+  P.$$("#tabNav [data-tab]").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+  P.$$(".panel").forEach((p) => p.classList.toggle("active", p.id === `panel-${name}`));
+  P.syncPageHeader(name);
+  try {
+    localStorage.setItem("panel.activeTab", name);
+  } catch (_) {}
+}
+
+P.initNavigation = function() {
+  P.$$("#tabNav [data-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => P.showTab(btn.dataset.tab));
+  });
+  let initialTab = "outreach";
+  try {
+    initialTab = localStorage.getItem("panel.activeTab") || initialTab;
+  } catch (_) {}
+  P.showTab(initialTab);
+}
+
+
+P.refreshStatus = async function() {
+  const s = await P.api("/api/status");
+  const parts = [];
+  parts.push(s.telegram_ok ? "✓ Telegram" : "✗ Telegram");
+  const aiLabel = s.llm_provider_name || "AI";
+  parts.push(s.llm_ok ? `✓ ${aiLabel}` : `✗ ${aiLabel}`);
+  if (s.llm_model) parts.push(s.llm_model);
+  parts.push(`аккаунтов: ${s.accounts_count}`);
+  parts.push(`прокси: ${s.proxies_count}/${s.accounts_count}`);
+  if (s.paused_dialogs) parts.push(`на паузе: ${s.paused_dialogs}`);
+  if (s.agents_count) parts.push(`агентов: ${s.agents_count}`);
+  P.$("#statusBar").textContent = parts.join(" · ");
+  P.$("#sessionsPath").textContent = s.sessions_path;
+  const badge = P.$("#runBadge");
+  const running = s.running || s.agent_running || s.group_chat_running;
+  if (s.group_chat_running && (s.running || s.agent_running)) badge.textContent = "несколько режимов";
+  else if (s.running && s.agent_running) badge.textContent = "рассылка + секретарь";
+  else if (s.running) badge.textContent = "рассылка";
+  else if (s.agent_running) badge.textContent = "секретарь";
+  else if (s.group_chat_running) badge.textContent = "групповой чат";
+  else badge.textContent = "остановлено";
+  badge.classList.toggle("running", running);
+  P.$("#btnStop").disabled = !s.running;
+  P.$("#btnStart").disabled = s.running;
+  P.$("#btnResume").disabled = s.running;
+  P.$("#btnStopAgents").disabled = !s.agent_running;
+  P.$("#btnStartAgents").disabled = s.agent_running;
+  const btnStopGc = P.$("#btnStopGroupChat");
+  const btnStartGc = P.$("#btnStartGroupChat");
+  if (btnStopGc) btnStopGc.disabled = !s.group_chat_running;
+  if (btnStartGc) btnStartGc.disabled = !!s.group_chat_running;
+}
+
+P.refreshEngine = async function() {
+  const e = await P.api("/api/engine");
+  if (e.running) {
+    P.$("#engineStats").textContent =
+      `Первых: ${e.success}/${e.total} · Ответов: ${e.replies_sent} · Ошибок: ${e.failed} · Диалогов: ${e.active_dialogs}`;
+  }
+  try {
+    const a = await P.api("/api/agents/stats");
+    const el = P.$("#agentStats");
+    if (el) {
+      if (a.running) {
+        el.className = "chip ok";
+        el.textContent = `Онлайн: ${a.active_accounts} · Диалогов: ${a.active_dialogs} · Ответов: ${a.replies_sent}`;
+      } else {
+        el.className = "chip muted";
+        el.textContent = "Остановлен";
+      }
+    }
+  } catch (_) {}
+  try {
+    await P.refreshGroupChatStatus();
+  } catch (_) {}
+}
+
+P.refreshLogs = async function() {
+  const { lines, total } = await P.api(`/api/logs?offset=${P.state.logOffset}`);
+  if (lines.length) {
+    const box = P.$("#logBox");
+    box.textContent += lines.join("\n") + "\n";
+    box.scrollTop = box.scrollHeight;
+    P.state.logOffset = total;
+  }
+}
+
+P.updateLlmHint = function(live) {
+  const p = P.state.llmProviders.find((x) => x.id === P.$("#llmProvider").value);
+  if (!p) return;
+  const src = live ? "список загружен с API провайдера" : "список по умолчанию — вставьте ключ и нажмите ↻";
+  P.$("#llmModelHint").innerHTML = `${src} · <a href="${p.docs_url}" target="_blank">получить ключ</a>`;
+}
+
+P.renderLlmModelSelect = function(models, selected) {
+  const sel = P.$("#llmModel");
+  if (!models.length) {
+    sel.innerHTML = `<option value="">— нет моделей —</option>`;
+    return;
+  }
+  const opts = models.map((m) =>
+    `<option value="${P.escapeHtml(m)}" ${m === selected ? "selected" : ""}>${P.escapeHtml(m)}</option>`);
+  if (selected && !models.includes(selected)) {
+    opts.unshift(`<option value="${P.escapeHtml(selected)}" selected>${P.escapeHtml(selected)} (сохранённая)</option>`);
+  }
+  sel.innerHTML = opts.join("");
+}
+
+P.loadLlmModels = async function(provider, selected) {
+  const data = await P.api(`/api/llm/models?provider=${encodeURIComponent(provider)}`);
+  P.renderLlmModelSelect(data.models || [], selected || data.selected_model || "");
+  P.updateLlmHint(data.live);
+  return data;
+}
+
+P.loadLlmProviders = async function() {
+  P.state.llmProviders = await P.api("/api/llm/providers");
+  const sel = P.$("#llmProvider");
+  sel.innerHTML = P.state.llmProviders.map((p) =>
+    `<option value="${P.escapeHtml(p.id)}">${P.escapeHtml(p.name)}</option>`).join("");
+  sel.onchange = async () => {
+    await P.loadLlmModels(sel.value);
+  };
+}
+
+P.syncLocalLlmUi = function() {
+  const isLocal = P.$("#llmProvider").value === "local";
+  const box = P.$("#localLlmBox");
+  if (box) box.classList.toggle("hidden", !isLocal);
+}
+
+P.loadConfig = async function() {
+  if (!P.state.llmProviders.length) await P.loadLlmProviders();
+  const c = await P.api("/api/config");
+  P.$("#apiId").value = c.telegram_api_id || "";
+  P.$("#apiHash").value = c.telegram_api_hash || "";
+  P.$("#llmProvider").value = c.llm_provider || "grok";
+  P.$("#grokKey").value = c.grok_api_key || "";
+  P.$("#grokModel").value = c.grok_model || "grok-3-mini";
+  P.$("#openaiKey").value = c.openai_api_key || "";
+  P.$("#geminiKey").value = c.gemini_api_key || "";
+  P.$("#anthropicKey").value = c.anthropic_api_key || "";
+  P.$("#deepseekKey").value = c.deepseek_api_key || "";
+  P.$("#openrouterKey").value = c.openrouter_api_key || "";
+  P.$("#localKey").value = c.local_api_key || "";
+  P.$("#localBaseUrl").value = c.local_base_url || "http://127.0.0.1:8000/v1";
+  P.syncLocalLlmUi();
+  const savedModel = c.llm_model || c.grok_model || "grok-3-mini";
+  await P.loadLlmModels(c.llm_provider || "grok", savedModel);
+  P.$("#delayMsg").value = c.delay_between_messages_sec;
+  P.$("#concurrent").value = c.max_concurrent_accounts;
+  P.$("#replyMin").value = c.reply_delay_min_sec;
+  P.$("#replyMax").value = c.reply_delay_max_sec;
+  P.$("#language").value = c.message_language;
+  P.$("#telegram2fa").value = c.telegram_2fa_password || "";
+}
+
+P.$("#llmProvider")?.addEventListener("change", async () => {
+  P.syncLocalLlmUi();
+  try {
+    await P.loadLlmModels(P.$("#llmProvider").value, P.$("#llmModel").value);
+  } catch (_) {}
+});
+
+P.$("#btnRefreshModels").onclick = async () => {
+  try {
+    if (P.$("#llmProvider").value === "local") {
+      await P.api("/api/config", {
+        method: "POST",
+        body: JSON.stringify({
+          telegram_api_id: parseInt(P.$("#apiId").value) || 0,
+          telegram_api_hash: P.$("#apiHash").value,
+          llm_provider: "local",
+          llm_model: P.$("#llmModel").value || "mistral-24b-ru-uncensored",
+          grok_api_key: P.$("#grokKey").value,
+          grok_model: P.$("#grokModel").value || "grok-3-mini",
+          openai_api_key: P.$("#openaiKey").value,
+          gemini_api_key: P.$("#geminiKey").value,
+          anthropic_api_key: P.$("#anthropicKey").value,
+          deepseek_api_key: P.$("#deepseekKey").value,
+          openrouter_api_key: P.$("#openrouterKey").value,
+          local_api_key: P.$("#localKey").value,
+          local_base_url: P.$("#localBaseUrl").value,
+          delay_between_messages_sec: parseInt(P.$("#delayMsg").value) || 30,
+          max_concurrent_accounts: parseInt(P.$("#concurrent").value) || 5,
+          reply_delay_min_sec: parseInt(P.$("#replyMin").value) || 5,
+          reply_delay_max_sec: parseInt(P.$("#replyMax").value) || 25,
+          message_language: P.$("#language").value || "ru",
+          telegram_2fa_password: P.$("#telegram2fa").value || "",
+        }),
+      });
+    }
+    await P.loadLlmModels(P.$("#llmProvider").value, P.$("#llmModel").value);
+    P.$("#configMsg").textContent = "Список моделей обновлён";
+  } catch (e) {
+    P.$("#configMsg").textContent = e.message;
+  }
+};
+
+P.$("#btnSaveConfig").addEventListener("click", async () => {
+  try {
+    await P.api("/api/config", {
+      method: "POST",
+      body: JSON.stringify({
+        telegram_api_id: parseInt(P.$("#apiId").value) || 0,
+        telegram_api_hash: P.$("#apiHash").value,
+        llm_provider: P.$("#llmProvider").value,
+        llm_model: P.$("#llmModel").value,
+        grok_api_key: P.$("#grokKey").value,
+        grok_model: P.$("#llmProvider").value === "grok" ? (P.$("#llmModel").value || "grok-3-mini") : (P.$("#grokModel").value || "grok-3-mini"),
+        openai_api_key: P.$("#openaiKey").value,
+        gemini_api_key: P.$("#geminiKey").value,
+        anthropic_api_key: P.$("#anthropicKey").value,
+        deepseek_api_key: P.$("#deepseekKey").value,
+        openrouter_api_key: P.$("#openrouterKey").value,
+        local_api_key: P.$("#localKey").value,
+        local_base_url: P.$("#localBaseUrl").value,
+        delay_between_messages_sec: parseInt(P.$("#delayMsg").value) || 30,
+        max_concurrent_accounts: parseInt(P.$("#concurrent").value) || 5,
+        message_language: P.$("#language").value,
+        reply_delay_min_sec: parseInt(P.$("#replyMin").value) || 5,
+        reply_delay_max_sec: parseInt(P.$("#replyMax").value) || 25,
+        telegram_2fa_password: P.$("#telegram2fa").value,
+      }),
+    });
+    P.$("#configMsg").textContent = "Сохранено";
+    await P.loadLlmModels(P.$("#llmProvider").value, P.$("#llmModel").value);
+    P.refreshStatus();
+  } catch (e) {
+    P.$("#configMsg").textContent = e.message;
+  }
+});
+
+P.PROXY_FILTERS = [
+  { id: "ok", label: "Рабочие", test: (p) => p.status === "ok" },
+  { id: "dead", label: "Мёртвые", test: (p) => p.status === "dead" },
+  { id: "unknown", label: "Не проверены", test: (p) => p.status === "unknown" },
+  { id: "free", label: "Свободные", test: (p) => !p.accounts_count },
+  { id: "used", label: "Привязанные", test: (p) => p.accounts_count > 0 },
+];
+
+P.proxiesMatchingView = function(proxies) {
+  if (!P.state.proxyViewFilters.size) return proxies;
+  return proxies.filter((p) => {
+    for (const fid of P.state.proxyViewFilters) {
+      const f = P.PROXY_FILTERS.find((x) => x.id === fid);
+      if (f && !f.test(p)) return false;
+    }
+    return true;
+  });
+}
+
+P.initProxyFilterUi = function() {
+  if (P.state.proxyFiltersInited) return;
+  P.state.proxyFiltersInited = true;
+  const chips = P.$("#proxySelectChips");
+  const views = P.$("#proxyViewFilters");
+  if (!chips || !views) return;
+
+  P.PROXY_FILTERS.forEach((f) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "filter-chip";
+    btn.dataset.filter = f.id;
+    btn.addEventListener("click", () => P.selectProxiesByFilter(f.id));
+    chips.appendChild(btn);
+
+    const label = document.createElement("label");
+    label.className = "filter-check inline-check";
+    const inp = document.createElement("input");
+    inp.type = "checkbox";
+    inp.dataset.viewFilter = f.id;
+    inp.addEventListener("change", () => {
+      if (inp.checked) P.state.proxyViewFilters.add(f.id);
+      else P.state.proxyViewFilters.delete(f.id);
+      P.renderProxyPoolTable();
+    });
+    label.append(inp, ` ${f.label}`);
+    views.appendChild(label);
+  });
+}
+
+P.selectProxiesByFilter = function(filterId) {
+  const f = P.PROXY_FILTERS.find((x) => x.id === filterId);
+  if (!f) return;
+  const ids = P.state.proxyPoolCache.filter(f.test).map((p) => p.id);
+  if (!ids.length) return;
+  P.state.selectedProxies = new Set(ids);
+  P.renderProxyPoolTable();
+}
+
+P.updateProxySelectionUi = function() {
+  const visible = P.proxiesMatchingView(P.state.proxyPoolCache);
+  const visTotal = visible.length;
+  const selected = P.state.selectedProxies.size;
+  const visSelected = visible.filter((p) => P.state.selectedProxies.has(p.id)).length;
+  const hint = P.$("#proxySelectedHint");
+  if (hint) {
+    hint.textContent = selected
+      ? `Выбрано: ${selected}${visTotal ? ` · в таблице ${visSelected}/${visTotal}` : ""}`
+      : (visTotal ? `В таблице: ${visTotal} из ${P.state.proxyPoolCache.length}` : "");
+  }
+  const master = P.$("#chkSelectAllProxies");
+  if (master) {
+    master.indeterminate = visSelected > 0 && visSelected < visTotal;
+    master.checked = visTotal > 0 && visSelected === visTotal;
+  }
+  P.PROXY_FILTERS.forEach((f) => {
+    const matched = P.state.proxyPoolCache.filter(f.test);
+    const n = matched.length;
+    const sel = matched.filter((p) => P.state.selectedProxies.has(p.id)).length;
+    const btn = document.querySelector(`.filter-chip[data-filter="${f.id}"]`);
+    if (!btn || !btn.closest("#proxySelectChips")) return;
+    btn.disabled = n === 0;
+    btn.classList.toggle("active", n > 0 && sel === n);
+    btn.textContent = n > 0 && sel === n ? `${f.label} (${n}) ✓` : `${f.label} (${n})`;
+  });
+}
+
+P.getSelectedProxyIdsOrAlert = function() {
+  const ids = [...P.state.selectedProxies];
+  if (!ids.length) {
+    alert("Отметьте прокси в таблице пула или нажмите chip-фильтр");
+    return null;
+  }
+  return ids;
+}
+
+P.proxyStatusChip = function(status) {
+  if (status === "ok") return '<span class="chip ok">рабочий</span>';
+  if (status === "dead") return '<span class="chip danger">мёртвый</span>';
+  return '<span class="chip warn">не проверен</span>';
+}
+
+P.proxyPoolSelectable = function(p) {
+  return p.status !== "dead";
+}
+
+P.proxySelectOptions = function(selectedId) {
+  const opts = ['<option value="">— не выбран —</option>'];
+  P.state.proxyPoolCache.filter(P.proxyPoolSelectable).forEach((p) => {
+    const sel = p.id === selectedId ? " selected" : "";
+    const used = p.accounts_count > 0 ? ` (${p.accounts_count})` : "";
+    const country = p.country_label ? `${p.country_label} · ` : "";
+    opts.push(`<option value="${P.escapeHtml(p.id)}"${sel}>${country}${P.escapeHtml(p.label || `${p.host}:${p.port}`)}${used}</option>`);
+  });
+  return opts.join("");
+}
+
+P.fillProxyPoolSelect = function(selectedId) {
+  const sel = P.$("#proxyPoolSelect");
+  if (!sel) return;
+  sel.innerHTML = P.proxySelectOptions(selectedId);
+  sel.disabled = !P.state.selectedAccount;
+  P.$("#btnBindProxy").disabled = !P.state.selectedAccount;
+  P.$("#btnClearProxy").disabled = !P.state.selectedAccount;
+  P.$("#btnSaveProxy").disabled = !P.state.selectedAccount;
+}
+
+P.loadProxyPool = async function() {
+  P.initProxyFilterUi();
+  const data = await P.api("/api/proxy-pool");
+  P.state.proxyPoolCache = data.items || [];
+  P.renderProxyPoolTable();
+  if (P.state.selectedAccount) {
+    const acc = P.state.accountsCache.find((a) => a.id === P.state.selectedAccount);
+    P.fillProxyPoolSelect(acc?.proxy_id || "");
+  } else {
+    P.fillProxyPoolSelect("");
+  }
+}
+
+P.renderProxyPoolTable = function() {
+  const tbody = P.$("#proxyPoolTable");
+  if (!tbody) return;
+  const visible = P.proxiesMatchingView(P.state.proxyPoolCache);
+  if (!visible.length) {
+    const msg = P.state.proxyViewFilters.size
+      ? "Нет прокси по выбранным фильтрам"
+      : "Пул пуст — вставьте список прокси выше";
+    tbody.innerHTML = `<tr><td colspan="7" class="hint">${msg}</td></tr>`;
+    P.updateProxySelectionUi();
+    return;
+  }
+  tbody.innerHTML = visible.map((p) => {
+    const accounts = (p.accounts || []).map((a) => P.escapeHtml(a)).join(", ");
+    const ping = p.latency_ms ? `${p.latency_ms} ms` : "—";
+    const checked = P.state.selectedProxies.has(p.id) ? "checked" : "";
+    return `<tr class="${p.status === "dead" ? "row-inactive" : ""}${P.state.selectedProxies.has(p.id) ? " selected" : ""}">
+      <td><input type="checkbox" class="proxy-chk" data-id="${P.escapeHtml(p.id)}" ${checked}></td>
+      <td><strong>${P.escapeHtml(p.label || `${p.host}:${p.port}`)}</strong><br><span class="hint">${P.escapeHtml(p.type)} · ${P.escapeHtml(p.exit_ip || "—")}</span></td>
+      <td>${p.country_label ? P.escapeHtml(p.country_label) : '<span class="chip muted">?</span>'}${p.country ? `<br><span class="hint">${P.escapeHtml(p.country)}</span>` : ""}</td>
+      <td>${P.proxyStatusChip(p.status)}${p.last_error ? `<br><span class="hint">${P.escapeHtml(p.last_error)}</span>` : ""}</td>
+      <td>${ping}</td>
+      <td>${p.accounts_count ? `<span class="chip ok">${p.accounts_count}</span> ${accounts}` : '<span class="chip muted">0</span>'}</td>
+      <td>
+        <button type="button" class="btn btn-sm ghost proxy-pool-recheck" data-id="${P.escapeHtml(p.id)}" title="Перепроверить">↻</button>
+        <button type="button" class="btn btn-sm danger proxy-pool-del" data-id="${P.escapeHtml(p.id)}">✕</button>
+      </td>
+    </tr>`;
+  }).join("");
+
+  tbody.querySelectorAll(".proxy-chk").forEach((el) => {
+    el.onchange = (ev) => {
+      const id = el.dataset.id;
+      if (ev.target.checked) P.state.selectedProxies.add(id);
+      else P.state.selectedProxies.delete(id);
+      P.updateProxySelectionUi();
+      el.closest("tr")?.classList.toggle("selected", ev.target.checked);
+    };
+  });
+
+  tbody.querySelectorAll(".proxy-pool-recheck").forEach((btn) => {
+    btn.onclick = async (ev) => {
+      ev.stopPropagation();
+      btn.disabled = true;
+      try {
+        await P.api(`/api/proxy-pool/${encodeURIComponent(btn.dataset.id)}/recheck`, { method: "POST" });
+        await P.loadProxyPool();
+        P.loadAccounts();
+        P.refreshStatus();
+      } catch (e) { alert(e.message); }
+      btn.disabled = false;
+    };
+  });
+  tbody.querySelectorAll(".proxy-pool-del").forEach((btn) => {
+    btn.onclick = async (ev) => {
+      ev.stopPropagation();
+      const id = btn.dataset.id;
+      const item = P.state.proxyPoolCache.find((p) => p.id === id);
+      const force = item?.accounts_count
+        ? confirm(`Прокси привязан к ${item.accounts_count} акк. Удалить и отвязать?`)
+        : confirm("Удалить прокси из пула?");
+      if (!force) return;
+      try {
+        await P.api(`/api/proxy-pool/${encodeURIComponent(id)}?unbind=true`, { method: "DELETE" });
+        P.state.selectedProxies.delete(id);
+        await P.loadProxyPool();
+        P.loadAccounts();
+        P.refreshStatus();
+      } catch (e) { alert(e.message); }
+    };
+  });
+  P.updateProxySelectionUi();
+}
+
+P.bindAccountProxy = async function(accountId, proxyId) {
+  await P.api(`/api/accounts/${encodeURIComponent(accountId)}/proxy/bind`, {
+    method: "POST",
+    body: JSON.stringify({ proxy_id: proxyId || null }),
+  });
+  await P.loadProxyPool();
+  P.loadAccounts();
+  P.refreshStatus();
+}
+
+P.loadAccounts = async function() {
+  if (!P.state.proxyPoolCache.length) {
+    try { await P.loadProxyPool(); } catch (_) {}
+  }
+  const rows = await P.api("/api/accounts");
+  P.state.accountsCache = rows;
+  P.initAccountFilterUi();
+  const visible = P.accountsMatchingView(rows);
+  const tbody = P.$("#accountsTable");
+  tbody.innerHTML = "";
+  if (!visible.length) {
+    const msg = P.state.accountViewFilters.size
+      ? "Нет аккаунтов по выбранным фильтрам показа"
+      : "Нет аккаунтов в папке sessions";
+    tbody.innerHTML = `<tr><td colspan="6" class="hint">${msg}</td></tr>`;
+    P.updateAccountsSelectionUi();
+    return;
+  }
+  visible.forEach((a) => {
+    const tr = document.createElement("tr");
+    if (a.id === P.state.selectedAccount) tr.classList.add("selected");
+    if (!a.is_active) tr.classList.add("row-inactive");
+    if (a.is_assistant) tr.classList.add("row-assistant");
+    const checked = P.state.selectedForRun.has(a.id) ? "checked" : "";
+    const canSelect = a.outreach_eligible;
+    const twofaHint = a.twofa_file ? ` · 2FA: ${a.twofa_file}` : "";
+    const typeChip = a.format === "tdata"
+      ? '<span class="chip warn">tdata</span>'
+      : '<span class="chip">session</span>';
+    const sessionChip = a.session_ready
+      ? `<span class="chip ok">${P.escapeHtml(a.session_file || "готов")}</span>`
+      : (a.format === "tdata" ? '<span class="chip warn">нет</span>' : '<span class="chip muted">—</span>');
+    const dupHint = a.is_duplicate ? ' <span class="chip warn">дубль</span>' : "";
+    const assistantChip = a.is_assistant
+      ? `<span class="chip violet" title="Только AI-агент">ассистент${a.assistant_name ? `: ${P.escapeHtml(a.assistant_name)}` : ""}</span>`
+      : "";
+    const inactiveChip = !a.is_active ? '<span class="chip danger">неактивен</span>' : "";
+    const proxyCell = P.state.proxyPoolCache.length
+      ? `<select class="proxy-bind-select assign-select" data-id="${P.escapeHtml(a.id)}" onclick="event.stopPropagation()">${P.proxySelectOptions(a.proxy_id || "")}</select>`
+      : (a.proxy ? `<span class="chip">${P.escapeHtml(a.proxy)}</span>` : '<span class="chip muted">—</span>');
+    tr.innerHTML = `
+      <td><input type="checkbox" class="acc-chk" data-id="${P.escapeHtml(a.id)}" ${checked} ${canSelect ? "" : "disabled"} onclick="event.stopPropagation()"></td>
+      <td><strong>${P.escapeHtml(a.id)}</strong> ${assistantChip} ${inactiveChip} ${dupHint}${twofaHint ? `<span class="hint">${P.escapeHtml(twofaHint)}</span>` : ""}</td>
+      <td>${typeChip}</td>
+      <td>${sessionChip}</td>
+      <td>${proxyCell}</td>
+      <td>${a.role ? P.escapeHtml(a.role) : '<span class="chip muted">—</span>'}</td>`;
+    tr.onclick = () => P.selectAccount(a.id);
+    tbody.appendChild(tr);
+    const proxySel = tr.querySelector(".proxy-bind-select");
+    if (proxySel) {
+      proxySel.onchange = async (ev) => {
+        ev.stopPropagation();
+        try {
+          await P.bindAccountProxy(a.id, ev.target.value || null);
+        } catch (e) {
+          alert(e.message);
+          P.loadAccounts();
+        }
+      };
+    }
+    tr.querySelector("input").onchange = (ev) => {
+      if (ev.target.checked) P.state.selectedForRun.add(a.id);
+      else P.state.selectedForRun.delete(a.id);
+      P.updateAccountsSelectionUi();
+    };
+  });
+  P.purgeIneligibleSelection();
+  P.updateAccountsSelectionUi();
+  try { P.renderGroupChatAccounts(); } catch (_) {}
+}
+
+P.purgeIneligibleSelection = function() {
+  [...P.state.selectedForRun].forEach((id) => {
+    const a = P.state.accountsCache.find((x) => x.id === id);
+    if (!a || !a.outreach_eligible) P.state.selectedForRun.delete(id);
+  });
+}
+
+P.ACCOUNT_FILTERS = [
+  { id: "outreach_eligible", label: "Для рассылки", test: (a) => a.outreach_eligible },
+  { id: "inactive", label: "Неактивные", test: (a) => !a.is_active },
+  { id: "assistants", label: "Ассистенты", test: (a) => a.is_assistant },
+  { id: "not_assistant", label: "Не ассистент", test: (a) => !a.is_assistant },
+  { id: "ready", label: "С .session", test: (a) => a.session_ready },
+  { id: "unconverted", label: "Без .session", test: (a) => a.format === "tdata" && !a.session_ready },
+  { id: "tdata", label: "tdata", test: (a) => a.format === "tdata" },
+  { id: "native_session", label: "Файл .session", test: (a) => a.format === "session" },
+  { id: "has_proxy", label: "С прокси", test: (a) => Boolean(a.proxy) },
+  { id: "no_proxy", label: "Без прокси", test: (a) => !a.proxy },
+  { id: "has_2fa", label: "С 2FA", test: (a) => Boolean(a.twofa_file) },
+  { id: "no_2fa", label: "Без 2FA", test: (a) => !a.twofa_file },
+  { id: "duplicates", label: "Дубли _1", test: (a) => a.is_duplicate },
+  { id: "no_duplicates", label: "Без дублей", test: (a) => !a.is_duplicate },
+  { id: "tg_import", label: "TG_*", test: (a) => a.id.startsWith("TG_") },
+  { id: "phone", label: "Телефон", test: (a) => /^\d{10,15}$/.test(a.id) },
+  { id: "has_role", label: "Со стилем", test: (a) => Boolean(a.role) },
+  { id: "no_role", label: "Без стиля", test: (a) => !a.role },
+];
+
+
+P.accountsMatchingView = function(accounts) {
+  if (!P.state.accountViewFilters.size) return accounts;
+  return accounts.filter((a) => {
+    for (const fid of P.state.accountViewFilters) {
+      const f = P.ACCOUNT_FILTERS.find((x) => x.id === fid);
+      if (f && !f.test(a)) return false;
+    }
+    return true;
+  });
+}
+
+P.initAccountFilterUi = function() {
+  if (P.state.accountFiltersInited) return;
+  P.state.accountFiltersInited = true;
+  const chips = P.$("#accountSelectChips");
+  const views = P.$("#accountViewFilters");
+  if (!chips || !views) return;
+
+  P.ACCOUNT_FILTERS.forEach((f) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "filter-chip";
+    btn.dataset.filter = f.id;
+    btn.addEventListener("click", () => P.selectByAccountFilter(f.id));
+    chips.appendChild(btn);
+
+    const label = document.createElement("label");
+    label.className = "filter-check inline-check";
+    const inp = document.createElement("input");
+    inp.type = "checkbox";
+    inp.dataset.viewFilter = f.id;
+    if (f.id === "outreach_eligible") inp.checked = true;
+    inp.addEventListener("change", () => {
+      if (inp.checked) P.state.accountViewFilters.add(f.id);
+      else P.state.accountViewFilters.delete(f.id);
+      P.loadAccounts();
+    });
+    label.append(inp, ` ${f.label}`);
+    views.appendChild(label);
+  });
+
+  P.$("#btnResetViewFilters")?.addEventListener("click", () => {
+    P.state.accountViewFilters.clear();
+    P.state.accountViewFilters.add("outreach_eligible");
+    views.querySelectorAll("input[type=checkbox]").forEach((i) => {
+      i.checked = i.dataset.viewFilter === "outreach_eligible";
+    });
+    P.loadAccounts();
+  });
+}
+
+P.selectByAccountFilter = function(filterId) {
+  const f = P.ACCOUNT_FILTERS.find((x) => x.id === filterId);
+  if (!f) return;
+  const ids = P.state.accountsCache.filter((a) => f.test(a) && a.outreach_eligible).map((a) => a.id);
+  if (!ids.length) return;
+  const additive = Boolean(P.$("#chkSelectAdditive")?.checked);
+  if (additive) {
+    ids.forEach((id) => P.state.selectedForRun.add(id));
+  } else {
+    P.state.selectedForRun = new Set(ids);
+  }
+  document.querySelectorAll(".acc-chk").forEach((el) => {
+    el.checked = P.state.selectedForRun.has(el.dataset.id);
+  });
+  P.updateAccountsSelectionUi();
+}
+
+P.updateAccountFilterCounts = function() {
+  P.ACCOUNT_FILTERS.forEach((f) => {
+    const matched = P.state.accountsCache.filter(f.test);
+    const n = matched.length;
+    const selected = matched.filter((a) => P.state.selectedForRun.has(a.id)).length;
+    const btn = document.querySelector(`.filter-chip[data-filter="${f.id}"]`);
+    if (!btn) return;
+    btn.disabled = n === 0;
+    btn.classList.toggle("active", n > 0 && selected === n);
+    btn.textContent = n > 0 && selected === n ? `${f.label} (${n}) ✓` : `${f.label} (${n})`;
+  });
+}
+
+P.updateAccountsSelectionUi = function() {
+  const total = P.state.accountsCache.length;
+  const visible = P.accountsMatchingView(P.state.accountsCache);
+  const visTotal = visible.length;
+  const selected = P.state.selectedForRun.size;
+  const visSelected = visible.filter((a) => P.state.selectedForRun.has(a.id)).length;
+
+  const hint = P.$("#accountsSelectedHint");
+  if (hint) {
+    if (!selected) {
+      hint.textContent = P.state.accountViewFilters.size ? `В таблице: ${visTotal} из ${total}` : "";
+    } else {
+      hint.textContent = `Выбрано: ${selected}${total ? ` · в таблице ${visSelected}/${visTotal}` : ""}`;
+    }
+  }
+
+  const master = P.$("#chkSelectAllAccounts");
+  if (master) {
+    master.indeterminate = visSelected > 0 && visSelected < visTotal;
+    master.checked = visTotal > 0 && visSelected === visTotal;
+  }
+
+  P.updateAccountFilterCounts();
+}
+
+P.setAccountSelection = function(ids) {
+  P.state.selectedForRun = new Set(ids);
+  document.querySelectorAll(".acc-chk").forEach((el) => {
+    el.checked = P.state.selectedForRun.has(el.dataset.id);
+  });
+  P.updateAccountsSelectionUi();
+}
+
+P.$("#chkSelectAllAccounts")?.addEventListener("change", (ev) => {
+  const visible = P.accountsMatchingView(P.state.accountsCache).filter((a) => a.outreach_eligible);
+  if (ev.target.checked) {
+    P.setAccountSelection(visible.map((a) => a.id));
+  } else {
+    P.setAccountSelection([]);
+  }
+});
+
+P.$("#btnClearAccountSelection")?.addEventListener("click", () => {
+  P.setAccountSelection([]);
+});
+
+P.selectAccount = async function(id) {
+  P.state.selectedAccount = id;
+  P.$("#proxyAccountLabel").textContent = `Аккаунт: ${id}`;
+  const acc = P.state.accountsCache.find((a) => a.id === id);
+  P.fillProxyPoolSelect(acc?.proxy_id || "");
+  P.loadAccounts();
+  try {
+    const p = await P.api(`/api/accounts/${encodeURIComponent(id)}/proxy`);
+    if (P.$("#proxyPoolSelect") && p.proxy_id) P.$("#proxyPoolSelect").value = p.proxy_id;
+    P.$("#proxyType").value = p.type || "socks5";
+    P.$("#proxyHost").value = p.host || "";
+    P.$("#proxyPort").value = p.port || "";
+    P.$("#proxyUser").value = p.username || "";
+    P.$("#proxyPass").value = p.password || "";
+  } catch (_) {}
+}
+
+P.$("#btnRefreshAccounts").onclick = () => { P.loadAccounts(); P.refreshStatus(); };
+
+P.convertTdata = async function(accountIds) {
+  P.$("#convertMsg").textContent = "Конвертация...";
+  try {
+    const r = await P.api("/api/sessions/convert", {
+      method: "POST",
+      body: JSON.stringify({ account_ids: accountIds || [] }),
+    });
+    const lines = (r.results || []).map(
+      (x) => `${x.success ? "✓" : "✗"} ${x.account_id}: ${x.message || x.output_path || ""}`
+    );
+    P.$("#convertMsg").textContent = `Готово: ${r.ok} успешно, ${r.failed} ошибок`;
+    if (lines.length) alert(lines.join("\n"));
+    P.loadAccounts();
+    P.refreshStatus();
+  } catch (e) {
+    P.$("#convertMsg").textContent = e.message;
+    alert(e.message);
+  }
+}
+
+P.$("#btnConvertSelected").onclick = async () => {
+  const rows = P.state.accountsCache.length ? P.state.accountsCache : await P.api("/api/accounts");
+  if (!P.state.selectedForRun.size) {
+    alert("Отметьте аккаунты галочками или нажмите «Без .session»");
+    return;
+  }
+  const tdataIds = [...P.state.selectedForRun].filter(
+    (id) => rows.find((a) => a.id === id && a.format === "tdata")
+  );
+  if (!tdataIds.length) return alert("Среди выбранных нет tdata");
+  await P.convertTdata(tdataIds);
+};
+
+P.$("#btnConvertAll").onclick = async () => {
+  const rows = await P.api("/api/accounts");
+  const tdataIds = rows.filter((a) => a.format === "tdata").map((a) => a.id);
+  if (!tdataIds.length) return alert("Нет tdata в папке sessions");
+  await P.convertTdata(tdataIds);
+};
+
+P.bulkUpdateProfile = async function() {
+  if (!P.state.selectedForRun.size) {
+    alert("Отметьте аккаунты галочками в таблице");
+    return;
+  }
+  const generateMode = P.$("#profileGenerateMode")?.value || "manual";
+  const changeFirst = generateMode !== "manual" ? true : P.$("#profileChangeFirst")?.checked;
+  const changeLast = generateMode === "names" || generateMode === "nicks"
+    ? true
+    : P.$("#profileChangeLast")?.checked;
+  const changeUsername = generateMode !== "manual"
+    ? Boolean(P.$("#profileWithUsername")?.checked)
+    : P.$("#profileChangeUsername")?.checked;
+  if (generateMode === "manual" && !changeFirst && !changeLast && !changeUsername) {
+    alert("Включите хотя бы одно поле: имя, фамилию или username");
+    return;
+  }
+  const accountIds = [...P.state.selectedForRun];
+  const readyCount = accountIds.filter(
+    (id) => P.state.accountsCache.find((a) => a.id === id && a.session_ready)
+  ).length;
+  if (!readyCount) {
+    alert("Среди выбранных нет аккаунтов с рабочим .session");
+    return;
+  }
+  const modeLabel = generateMode === "names"
+    ? "случайные имя+фамилия"
+    : generateMode === "nicks"
+      ? "случайные ники"
+      : "шаблоны";
+  if (!confirm(`Сменить профиль у ${readyCount} аккаунт(ов)? Режим: ${modeLabel}`)) return;
+
+  P.$("#profileMsg").textContent = "Обновление профилей...";
+  try {
+    const r = await P.api("/api/accounts/bulk-profile", {
+      method: "POST",
+      body: JSON.stringify({
+        account_ids: accountIds,
+        generate_mode: generateMode,
+        lang: P.$("#profileLang")?.value || "ru",
+        with_username: Boolean(P.$("#profileWithUsername")?.checked),
+        change_first_name: changeFirst,
+        change_last_name: changeLast,
+        change_username: changeUsername,
+        first_name: P.$("#profileFirstName")?.value || "",
+        last_name: P.$("#profileLastName")?.value || "",
+        username: P.$("#profileUsername")?.value || "",
+        delay_sec: parseInt(P.$("#profileDelay")?.value, 10) || 3,
+      }),
+    });
+    const lines = (r.results || []).map(
+      (x) => `${x.success ? "✓" : "✗"} ${x.account_id}: ${x.message || ""}`
+    );
+    P.$("#profileMsg").textContent = r.message || "Готово";
+    if (lines.length) alert(lines.join("\n"));
+    P.refreshStatus();
+  } catch (e) {
+    P.$("#profileMsg").textContent = e.message;
+    alert(e.message);
+  }
+}
+
+P.syncProfileModeUi = function() {
+  const mode = P.$("#profileGenerateMode")?.value || "manual";
+  const manual = mode === "manual";
+  P.$("#profileManualBlock")?.classList.toggle("hidden", !manual);
+  P.$("#profileGenerateBlock")?.classList.toggle("hidden", manual);
+}
+
+P.previewProfileGeneration = async function() {
+  const mode = P.$("#profileGenerateMode")?.value;
+  if (mode === "manual") return;
+  try {
+    const r = await P.api("/api/accounts/profile-preview", {
+      method: "POST",
+      body: JSON.stringify({
+        generate_mode: mode,
+        lang: P.$("#profileLang")?.value || "ru",
+        with_username: Boolean(P.$("#profileWithUsername")?.checked),
+        count: 5,
+      }),
+    });
+    const lines = (r.samples || []).map((s, i) => {
+      const name = `${s.first_name || ""} ${s.last_name || ""}`.trim();
+      const user = s.username ? ` @${s.username}` : "";
+      return `${i + 1}. ${name}${user}`;
+    });
+    const box = P.$("#profilePreviewBox");
+    if (box) {
+      box.textContent = lines.join("\n") || "Нет примеров";
+      box.classList.remove("hidden");
+    }
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+P.$("#profileGenerateMode")?.addEventListener("change", P.syncProfileModeUi);
+P.$("#btnProfilePreview")?.addEventListener("click", P.previewProfileGeneration);
+P.$("#btnBulkProfile")?.addEventListener("click", P.bulkUpdateProfile);
+P.syncProfileModeUi();
+
+P.$("#btnSaveProxy").onclick = async () => {
+  if (!P.state.selectedAccount) return alert("Выберите аккаунт");
+  try {
+    await P.api(`/api/accounts/${encodeURIComponent(P.state.selectedAccount)}/proxy`, {
+      method: "POST",
+      body: JSON.stringify({
+        type: P.$("#proxyType").value,
+        host: P.$("#proxyHost").value,
+        port: parseInt(P.$("#proxyPort").value) || 0,
+        username: P.$("#proxyUser").value,
+        password: P.$("#proxyPass").value,
+      }),
+    });
+    await P.loadProxyPool();
+    P.loadAccounts();
+    P.refreshStatus();
+    alert("Прокси добавлен в пул и привязан");
+  } catch (e) { alert(e.message); }
+};
+
+P.$("#btnBindProxy").onclick = async () => {
+  if (!P.state.selectedAccount) return;
+  try {
+    await P.bindAccountProxy(P.state.selectedAccount, P.$("#proxyPoolSelect").value || null);
+  } catch (e) { alert(e.message); }
+};
+
+P.$("#btnClearProxy").onclick = async () => {
+  if (!P.state.selectedAccount) return;
+  try {
+    await P.bindAccountProxy(P.state.selectedAccount, null);
+    P.fillProxyPoolSelect("");
+  } catch (e) { alert(e.message); }
+};
+
+P.$("#btnImportProxyPool").onclick = async () => {
+  const lines = P.$("#proxyPoolImport")?.value?.trim();
+  if (!lines) return alert("Вставьте список прокси");
+  P.$("#proxyPoolMsg").textContent = "Проверка прокси (страна, пинг)...";
+  P.$("#btnImportProxyPool").disabled = true;
+  try {
+    const r = await P.api("/api/proxy-pool/import", {
+      method: "POST",
+      body: JSON.stringify({ lines, type: P.$("#proxyPoolType")?.value || "socks5" }),
+    });
+    const parts = [
+      `добавлено: ${r.added}`,
+      `дублей: ${r.skipped_duplicate}`,
+      `мёртвых: ${r.skipped_dead}`,
+    ];
+    if (r.skipped_parse) parts.push(`ошибок строк: ${r.skipped_parse}`);
+    parts.push(`всего в пуле: ${r.total}`);
+    P.$("#proxyPoolMsg").textContent = parts.join(" · ");
+    P.$("#proxyPoolImport").value = "";
+    await P.loadProxyPool();
+    P.loadAccounts();
+    P.refreshStatus();
+    const added = (r.details || []).filter((d) => d.status === "added");
+    if (added.length) {
+      const sample = added.slice(0, 8).map((d) =>
+        `✓ ${d.country_code || "?"} ${d.exit_ip || ""} (${d.latency_ms || "?"} ms)`
+      ).join("\n");
+      alert(`Добавлено ${r.added}:\n${sample}${added.length > 8 ? "\n..." : ""}`);
+    } else if (!r.added) {
+      alert("Ни один прокси не добавлен — проверьте список или дубликаты");
+    }
+  } catch (e) {
+    P.$("#proxyPoolMsg").textContent = e.message;
+    alert(e.message);
+  }
+  P.$("#btnImportProxyPool").disabled = false;
+};
+
+P.$("#btnRecheckProxyPool").onclick = async () => {
+  P.$("#proxyPoolMsg").textContent = "Перепроверка всего пула...";
+  P.$("#btnRecheckProxyPool").disabled = true;
+  try {
+    const r = await P.api("/api/proxy-pool/recheck", { method: "POST", body: JSON.stringify({ proxy_ids: [] }) });
+    P.$("#proxyPoolMsg").textContent = `ok: ${r.added} · мёртвых: ${r.skipped_dead} · дублей: ${r.skipped_duplicate}`;
+    await P.loadProxyPool();
+    P.loadAccounts();
+    P.refreshStatus();
+  } catch (e) {
+    P.$("#proxyPoolMsg").textContent = e.message;
+    alert(e.message);
+  }
+  P.$("#btnRecheckProxyPool").disabled = false;
+};
+
+P.$("#chkSelectAllProxies")?.addEventListener("change", (ev) => {
+  const visible = P.proxiesMatchingView(P.state.proxyPoolCache);
+  if (ev.target.checked) visible.forEach((p) => P.state.selectedProxies.add(p.id));
+  else visible.forEach((p) => P.state.selectedProxies.delete(p.id));
+  P.renderProxyPoolTable();
+});
+
+P.$("#btnClearProxySelection")?.addEventListener("click", () => {
+  P.state.selectedProxies.clear();
+  P.renderProxyPoolTable();
+});
+
+P.$("#btnProxyRecheckSelected")?.addEventListener("click", async () => {
+  const ids = P.getSelectedProxyIdsOrAlert();
+  if (!ids) return;
+  P.$("#proxyPoolMsg").textContent = `Перепроверка ${ids.length} прокси...`;
+  try {
+    const r = await P.api("/api/proxy-pool/recheck", {
+      method: "POST",
+      body: JSON.stringify({ proxy_ids: ids }),
+    });
+    P.$("#proxyPoolMsg").textContent = `ok: ${r.added} · мёртвых: ${r.skipped_dead}`;
+    await P.loadProxyPool();
+    P.loadAccounts();
+    P.refreshStatus();
+  } catch (e) {
+    P.$("#proxyPoolMsg").textContent = e.message;
+    alert(e.message);
+  }
+});
+
+P.$("#btnProxyDeleteSelected")?.addEventListener("click", async () => {
+  const ids = P.getSelectedProxyIdsOrAlert();
+  if (!ids) return;
+  const bound = ids.filter((id) => P.state.proxyPoolCache.find((p) => p.id === id)?.accounts_count);
+  const msg = bound.length
+    ? `Удалить ${ids.length} прокси? ${bound.length} привязаны к аккаунтам — отвязка автоматически.`
+    : `Удалить ${ids.length} прокси из пула?`;
+  if (!confirm(msg)) return;
+  try {
+    const r = await P.api("/api/proxy-pool/bulk-delete", {
+      method: "POST",
+      body: JSON.stringify({ proxy_ids: ids, unbind: true }),
+    });
+    P.state.selectedProxies.clear();
+    P.$("#proxyPoolMsg").textContent = `Удалено: ${r.deleted}`;
+    await P.loadProxyPool();
+    P.loadAccounts();
+    P.refreshStatus();
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+P.$("#btnProxyPurgeDead")?.addEventListener("click", async () => {
+  const dead = P.state.proxyPoolCache.filter((p) => p.status === "dead").length;
+  if (!dead) return alert("Мёртвых прокси нет");
+  if (!confirm(`Удалить все мёртвые прокси (${dead})?`)) return;
+  try {
+    const r = await P.api("/api/proxy-pool/purge-dead?unbind=true", { method: "POST" });
+    P.state.selectedProxies.clear();
+    P.$("#proxyPoolMsg").textContent = `Удалено мёртвых: ${r.deleted}`;
+    await P.loadProxyPool();
+    P.loadAccounts();
+    P.refreshStatus();
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+P.$("#btnProxyAutoBind")?.addEventListener("click", async () => {
+  const accountIds = P.state.selectedForRun.size ? [...P.state.selectedForRun] : [];
+  const proxyIds = P.state.selectedProxies.size ? [...P.state.selectedProxies] : [];
+  const accHint = accountIds.length
+    ? `${accountIds.length} выбранных аккаунтов`
+    : "аккаунтов без прокси";
+  const proxyHint = proxyIds.length
+    ? `${proxyIds.length} выбранных прокси`
+    : "свободных рабочих прокси";
+  if (!confirm(`Привязать ${proxyHint} к ${accHint} (1:1 по порядку)?`)) return;
+  try {
+    const r = await P.api("/api/proxy-pool/auto-bind", {
+      method: "POST",
+      body: JSON.stringify({ account_ids: accountIds, proxy_ids: proxyIds }),
+    });
+    P.$("#proxyPoolMsg").textContent = `Привязано пар: ${r.paired}`;
+    if (r.paired) alert(`Привязано ${r.paired} пар`);
+    else alert("Не удалось привязать — проверьте свободные прокси и аккаунты без прокси");
+    await P.loadProxyPool();
+    P.loadAccounts();
+    P.refreshStatus();
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+P.$("#btnRefreshProxyPool").onclick = async () => {
+  await P.loadProxyPool();
+  P.loadAccounts();
+};
 
 
 P.loadRoles = async function() {
@@ -717,5 +1812,33 @@ P.startEngine = async function(resumeOnly) {
 P.$("#btnStart").onclick = () => P.startEngine(false);
 P.$("#btnResume").onclick = () => P.startEngine(true);
 P.$("#btnStop").onclick = async () => { await P.api("/api/engine/stop", { method: "POST" }); P.refreshStatus(); };
+
+P.tick = async function() {
+  await P.refreshStatus();
+  await P.refreshEngine();
+  await P.refreshLogs();
+}
+
+P.bootstrap = async function() {
+  if (window.__panelBootStarted) return;
+  window.__panelBootStarted = true;
+  P.initNavigation();
+  await Promise.allSettled([
+    P.loadConfig(),
+    P.loadProxyPool(),
+    P.loadAccounts(),
+    P.loadRoles(),
+    P.loadDialogSettings(),
+    P.loadDialogs(),
+    P.loadAgents(),
+    P.loadGroupChat(),
+    P.refreshStatus(),
+  ]);
+  if (!window.__panelTickHandle) {
+    window.__panelTickHandle = setInterval(() => {
+      P.tick().catch(() => {});
+    }, 1500);
+  }
+}
 
 })();

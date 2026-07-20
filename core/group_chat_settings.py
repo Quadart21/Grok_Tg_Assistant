@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from core.json_store import read_json, write_json_atomic
 
 
 @dataclass
@@ -87,15 +88,11 @@ class GroupChatSettings:
     def load(cls, path: Path) -> GroupChatSettings:
         if not path.exists():
             return cls()
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = read_json(path, {})
         return cls.from_dict(data)
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(self.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        write_json_atomic(path, self.to_dict())
 
     def to_dict(self) -> dict[str, Any]:
         return {

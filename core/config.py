@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.json_store import read_json, write_json_atomic
 from core.llm_providers import DEFAULT_PROVIDER, provider_info
 from core.master_prompt import DEFAULT_MASTER_PROMPT, MasterPromptConfig
 
@@ -62,7 +62,7 @@ class AppConfig:
 
     @classmethod
     def load(cls, path: Path) -> AppConfig:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = read_json(path, {})
         llm_provider = str(data.get("llm_provider") or DEFAULT_PROVIDER)
         llm_model = str(data.get("llm_model") or "")
         grok_key = str(data.get("grok_api_key") or "")
@@ -98,44 +98,39 @@ class AppConfig:
         )
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
         if self.llm_provider == "grok" and self.grok_api_key:
             pass
         elif self.llm_provider == "grok":
             self.grok_api_key = self.get_llm_api_key()
         if self.llm_provider == "grok" and not self.llm_model:
             self.llm_model = self.grok_model
-        path.write_text(
-            json.dumps(
-                {
-                    "telegram_api_id": self.telegram_api_id,
-                    "telegram_api_hash": self.telegram_api_hash,
-                    "llm_provider": self.llm_provider or DEFAULT_PROVIDER,
-                    "llm_model": self.llm_model or self.get_llm_model(),
-                    "grok_api_key": self.grok_api_key,
-                    "grok_model": self.grok_model,
-                    "openai_api_key": self.openai_api_key,
-                    "gemini_api_key": self.gemini_api_key,
-                    "anthropic_api_key": self.anthropic_api_key,
-                    "deepseek_api_key": self.deepseek_api_key,
-                    "openrouter_api_key": self.openrouter_api_key,
-                    "local_api_key": self.local_api_key,
-                    "local_base_url": self.local_base_url,
-                    "sessions_dir": self.sessions_dir,
-                    "proxies_file": self.proxies_file,
-                    "roles_file": self.roles_file,
-                    "delay_between_messages_sec": self.delay_between_messages_sec,
-                    "max_concurrent_accounts": self.max_concurrent_accounts,
-                    "message_language": self.message_language,
-                    "reply_delay_min_sec": self.reply_delay_min_sec,
-                    "reply_delay_max_sec": self.reply_delay_max_sec,
-                    "state_file": self.state_file,
-                    "telegram_2fa_password": self.telegram_2fa_password,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        write_json_atomic(
+            path,
+            {
+                "telegram_api_id": self.telegram_api_id,
+                "telegram_api_hash": self.telegram_api_hash,
+                "llm_provider": self.llm_provider or DEFAULT_PROVIDER,
+                "llm_model": self.llm_model or self.get_llm_model(),
+                "grok_api_key": self.grok_api_key,
+                "grok_model": self.grok_model,
+                "openai_api_key": self.openai_api_key,
+                "gemini_api_key": self.gemini_api_key,
+                "anthropic_api_key": self.anthropic_api_key,
+                "deepseek_api_key": self.deepseek_api_key,
+                "openrouter_api_key": self.openrouter_api_key,
+                "local_api_key": self.local_api_key,
+                "local_base_url": self.local_base_url,
+                "sessions_dir": self.sessions_dir,
+                "proxies_file": self.proxies_file,
+                "roles_file": self.roles_file,
+                "delay_between_messages_sec": self.delay_between_messages_sec,
+                "max_concurrent_accounts": self.max_concurrent_accounts,
+                "message_language": self.message_language,
+                "reply_delay_min_sec": self.reply_delay_min_sec,
+                "reply_delay_max_sec": self.reply_delay_max_sec,
+                "state_file": self.state_file,
+                "telegram_2fa_password": self.telegram_2fa_password,
+            },
         )
 
 
@@ -184,7 +179,7 @@ class RolesConfig:
     def load(cls, path: Path) -> RolesConfig:
         if not path.exists():
             return cls(default_role="Вы дружелюбный собеседник. Пишете первым в Telegram.")
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = read_json(path, {})
         groups = [
             RoleGroup(
                 name=g["name"],
@@ -226,7 +221,7 @@ class RolesConfig:
                 for g in self.groups
             ],
         }
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json_atomic(path, payload)
 
     def sync_group_accounts_from_assignments(self) -> None:
         for group in self.groups:

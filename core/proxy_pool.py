@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 from core.config import ProxyConfig
+from core.json_store import read_json, write_json_atomic
 from core.proxy_checker import (
     check_many,
     check_proxy,
@@ -174,19 +174,18 @@ def _new_id() -> str:
 def load_pool(path: Path) -> ProxyPool:
     if not path.exists():
         return ProxyPool()
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = read_json(path, {})
     items = [PoolProxy.from_dict(x) for x in data.get("items", [])]
     bindings = {str(k): str(v) for k, v in (data.get("bindings") or {}).items()}
     return ProxyPool(items=items, bindings=bindings)
 
 
 def save_pool(path: Path, pool: ProxyPool) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "items": [item.to_dict() for item in pool.items],
         "bindings": dict(sorted(pool.bindings.items(), key=lambda x: x[0].lower())),
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_atomic(path, payload)
 
 
 def parse_proxy_line(line: str, default_type: str = "socks5") -> tuple[str, str, int, str, str] | None:

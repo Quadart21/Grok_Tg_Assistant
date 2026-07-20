@@ -1,4 +1,4 @@
-/* ─── App shell: top navigation ─── */
+/* ─── App shell: header + dock ─── */
 .app {
   display: flex;
   flex-direction: column;
@@ -11,8 +11,8 @@
   display: flex;
   align-items: center;
   gap: 1rem;
-  height: var(--header-h);
-  padding: 0 1rem 0 1.25rem;
+  min-height: var(--header-h);
+  padding: 0.9rem 1.25rem 1rem;
   background: rgba(12, 12, 16, 0.92);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
@@ -50,43 +50,34 @@
   white-space: nowrap;
 }
 
-.top-nav {
+.header-copy {
   display: flex;
-  align-items: center;
-  gap: 0.2rem;
+  flex-direction: column;
+  gap: 0.18rem;
   flex: 1;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
 }
 
-.top-nav::-webkit-scrollbar { display: none; }
-
-.nav-item {
-  flex-shrink: 0;
-  padding: 0.45rem 0.85rem;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 0.84rem;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-
-.nav-item:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-.nav-item.active {
-  background: var(--accent-dim);
-  border-color: rgba(34, 211, 238, 0.3);
+.page-kicker {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
   color: var(--accent);
+}
+
+.header-copy strong {
+  font-size: 1.04rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.header-copy span:last-child {
+  font-size: 0.79rem;
+  color: var(--text-secondary);
+  line-height: 1.35;
+  max-width: 760px;
 }
 
 .header-meta {
@@ -142,7 +133,88 @@
   flex: 1;
   width: 100%;
   max-width: none;
-  padding: 1.25rem 1.5rem 2rem;
+  padding: 1.25rem 1.5rem 7.5rem;
+}
+
+.dock-nav {
+  position: fixed;
+  left: 50%;
+  bottom: 1.05rem;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  width: min(calc(100vw - 1.5rem), 980px);
+  padding: 0.7rem 0.85rem 0.8rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 26px;
+  background: linear-gradient(180deg, rgba(28, 30, 40, 0.94), rgba(14, 15, 20, 0.92));
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(18px) saturate(135%);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.dock-nav::-webkit-scrollbar { display: none; }
+
+.dock-item {
+  flex: 1 0 0;
+  min-width: 92px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.25rem 0.2rem;
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.18s ease, color 0.18s ease, background 0.18s ease;
+}
+
+.dock-item:hover {
+  transform: translateY(-6px) scale(1.02);
+  color: var(--text);
+}
+
+.dock-item.active { color: var(--text); }
+
+.dock-item.active .dock-icon {
+  transform: translateY(-8px) scale(1.08);
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0.06)),
+    linear-gradient(180deg, rgba(43, 226, 255, 0.85), rgba(19, 144, 191, 0.92));
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: 0 14px 22px rgba(20, 113, 145, 0.34), 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.dock-item.active .dock-label { color: var(--text); }
+
+.dock-icon {
+  width: 3.2rem;
+  height: 3.2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.17), rgba(255, 255, 255, 0.04)),
+    linear-gradient(180deg, rgba(53, 56, 72, 0.95), rgba(26, 27, 34, 0.95));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 18px rgba(0, 0, 0, 0.24);
+  font-size: 0.77rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.dock-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-muted);
 }
 
 .panel { display: none; animation: fadeIn 0.2s ease; }
