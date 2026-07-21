@@ -2165,15 +2165,24 @@ P.syncGroupChatFromStatus = function(st) {
     P.renderGroupChatAccounts();
   }
   if (st.chat_id && P.$("#groupChatSelect")) {
-    const exists = [...$("#groupChatSelect").options].some((option) => Number(option.value) === Number(st.chat_id));
+    const select = P.$("#groupChatSelect");
+    const targetValue = String(st.chat_id);
+    const exists = [...select.options].some((option) => Number(option.value) === Number(st.chat_id));
     if (!exists) {
       const option = document.createElement("option");
-      option.value = st.chat_id;
+      option.value = targetValue;
       option.textContent = st.chat_title || `Chat ${st.chat_id}`;
-      P.$("#groupChatSelect").appendChild(option);
+      select.appendChild(option);
     }
-    P.$("#groupChatSelect").value = String(st.chat_id);
-    P.renderGroupChatVenuePreview();
+    const shouldSyncSelection =
+      !select.value ||
+      !select.dataset.touched ||
+      select.value === targetValue;
+    if (shouldSyncSelection) {
+      select.value = targetValue;
+      delete select.dataset.touched;
+      P.renderGroupChatVenuePreview();
+    }
   }
 }
 
@@ -2265,6 +2274,7 @@ P.saveAndApplyGroupChatScene = async function() {
   if (!saved) return;
   try {
     await P.applyGroupChatScene();
+    delete P.$("#groupChatSelect").dataset.touched;
     P.$("#groupChatMsg").textContent = "Группа и роли применены";
     await P.refreshGroupChatStatus();
   } catch (e) {
@@ -2408,7 +2418,10 @@ P.$("#btnRefreshGroupChat").onclick = async () => {
   P.renderGroupChatAccounts();
   await P.refreshGroupChatStatus();
 };
-P.$("#groupChatSelect").onchange = P.renderGroupChatVenuePreview;
+P.$("#groupChatSelect").onchange = () => {
+  P.$("#groupChatSelect").dataset.touched = "1";
+  P.renderGroupChatVenuePreview();
+};
 P.$("#btnGroupChatSelectReady").onclick = () => {
   P.state.selectedGroupChatAccounts = new Set(P.groupChatEligibleAccounts().filter((a) => a.session_ready).map((a) => a.id));
   P.renderGroupChatAccounts();

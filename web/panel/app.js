@@ -2149,15 +2149,24 @@ function syncGroupChatFromStatus(st) {
     renderGroupChatAccounts();
   }
   if (st.chat_id && $("#groupChatSelect")) {
-    const exists = [...$("#groupChatSelect").options].some((option) => Number(option.value) === Number(st.chat_id));
+    const select = $("#groupChatSelect");
+    const targetValue = String(st.chat_id);
+    const exists = [...select.options].some((option) => Number(option.value) === Number(st.chat_id));
     if (!exists) {
       const option = document.createElement("option");
-      option.value = st.chat_id;
+      option.value = targetValue;
       option.textContent = st.chat_title || `Chat ${st.chat_id}`;
-      $("#groupChatSelect").appendChild(option);
+      select.appendChild(option);
     }
-    $("#groupChatSelect").value = String(st.chat_id);
-    renderGroupChatVenuePreview();
+    const shouldSyncSelection =
+      !select.value ||
+      !select.dataset.touched ||
+      select.value === targetValue;
+    if (shouldSyncSelection) {
+      select.value = targetValue;
+      delete select.dataset.touched;
+      renderGroupChatVenuePreview();
+    }
   }
 }
 
@@ -2249,6 +2258,7 @@ async function saveAndApplyGroupChatScene() {
   if (!saved) return;
   try {
     await applyGroupChatScene();
+    delete $("#groupChatSelect").dataset.touched;
     $("#groupChatMsg").textContent = "Группа и роли применены";
     await refreshGroupChatStatus();
   } catch (e) {
@@ -2392,7 +2402,10 @@ $("#btnRefreshGroupChat").onclick = async () => {
   renderGroupChatAccounts();
   await refreshGroupChatStatus();
 };
-$("#groupChatSelect").onchange = renderGroupChatVenuePreview;
+$("#groupChatSelect").onchange = () => {
+  $("#groupChatSelect").dataset.touched = "1";
+  renderGroupChatVenuePreview();
+};
 $("#btnGroupChatSelectReady").onclick = () => {
   selectedGroupChatAccounts = new Set(groupChatEligibleAccounts().filter((a) => a.session_ready).map((a) => a.id));
   renderGroupChatAccounts();
