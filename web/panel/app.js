@@ -2236,19 +2236,24 @@ async function saveGroupChatSettings() {
   payload.stop_keywords = $("#gc_stop_keywords").value.split(",").map((x) => x.trim()).filter(Boolean);
   try {
     await api("/api/group-chat/settings", { method: "POST", body: JSON.stringify(payload) });
-    const status = await api("/api/group-chat/status");
-    if (status.running) {
-      await applyGroupChatScene();
-      $("#groupChatSettingsMsg").textContent = "Настройки и сцена применены";
-      $("#groupChatMsg").textContent = "Сцена обновлена без перезапуска";
-      await refreshGroupChatStatus();
-    } else {
-      $("#groupChatSettingsMsg").textContent = "Настройки сохранены";
-    }
+    $("#groupChatSettingsMsg").textContent = "Настройки сохранены";
     return true;
   } catch (e) {
     $("#groupChatSettingsMsg").textContent = e.message;
     return false;
+  }
+}
+
+async function saveAndApplyGroupChatScene() {
+  const saved = await saveGroupChatSettings();
+  if (!saved) return;
+  try {
+    await applyGroupChatScene();
+    $("#groupChatMsg").textContent = "Группа и роли применены";
+    await refreshGroupChatStatus();
+  } catch (e) {
+    $("#groupChatMsg").textContent = e.message;
+    alert(e.message);
   }
 }
 
@@ -2380,6 +2385,7 @@ async function loadGroupChat() {
 $("#btnFindCommonChats").onclick = findCommonGroupChats;
 $("#btnGroupChatJoinLink").onclick = joinGroupChatByLink;
 $("#btnSaveGroupChatSettings").onclick = saveGroupChatSettings;
+$("#btnApplyGroupChatScene").onclick = saveAndApplyGroupChatScene;
 $("#btnStartGroupChat").onclick = startGroupChat;
 $("#btnStopGroupChat").onclick = stopGroupChat;
 $("#btnRefreshGroupChat").onclick = async () => {
