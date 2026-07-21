@@ -600,26 +600,52 @@
 
         <div class="operations-shell group-chat-shell">
           <div class="operations-main group-chat-main">
-            <div class="card card-accent">
+            <div class="card card-accent group-chat-overview">
               <div class="section-block-heading">
                 <div>
-                  <h3>Команда разговора</h3>
-                  <p class="hint">Отберите участников, задайте им вес активности и подготовьте роли под тему.</p>
+                  <h3>Рабочая сцена</h3>
+                  <p class="hint">Слева теперь только один слой управления за раз: состав, сцена или лимиты.</p>
                 </div>
                 <div class="detail-badges">
                   <span class="chip" id="groupChatStats">Остановлен</span>
                 </div>
               </div>
-              <div class="btn-row">
-                <button class="btn ghost" id="btnGroupChatSelectReady">Выбрать готовые</button>
-                <button class="btn ghost" id="btnGroupChatSelectAll">Выбрать всех</button>
-                <button class="btn ghost" id="btnGroupChatClearSelection">Очистить</button>
+              <div class="group-chat-subnav" id="groupChatSubnav">
+                <button type="button" class="btn ghost active" data-gc-nav="team">Состав</button>
+                <button type="button" class="btn ghost" data-gc-nav="scene">Сцена</button>
+                <button type="button" class="btn ghost" data-gc-nav="limits">Лимиты</button>
               </div>
-              <p class="hint" id="groupChatSelectionHint">Нужно минимум 2 аккаунта. Для естественного разговора рекомендуем 3-6 участников.</p>
-              <div class="group-chat-accounts-grid" id="groupChatAccountsGrid"></div>
             </div>
 
-            <div class="page-grid page-grid-2">
+            <div class="group-chat-section active" data-gc-section="team">
+              <div class="card card-accent">
+                <div class="section-block-heading">
+                  <div>
+                    <h3>Команда разговора</h3>
+                    <p class="hint">Отберите участников, задайте им вес активности и подготовьте роли под тему.</p>
+                  </div>
+                </div>
+                <div class="btn-row">
+                  <button class="btn ghost" id="btnGroupChatSelectReady">Выбрать готовые</button>
+                  <button class="btn ghost" id="btnGroupChatSelectAll">Выбрать всех</button>
+                  <button class="btn ghost" id="btnGroupChatClearSelection">Очистить</button>
+                </div>
+                <p class="hint" id="groupChatSelectionHint">Нужно минимум 2 аккаунта. Для естественного разговора рекомендуем 3-6 участников.</p>
+                <div class="group-chat-accounts-grid" id="groupChatAccountsGrid"></div>
+              </div>
+
+              <div class="card">
+                <div class="section-block-heading">
+                  <div>
+                    <h3>Командные роли</h3>
+                    <p class="hint">У каждого участника можно быстро уточнить роль и индивидуальный промпт.</p>
+                  </div>
+                </div>
+                <div id="groupChatRolesBox"></div>
+              </div>
+            </div>
+
+            <div class="group-chat-section" data-gc-section="scene">
               <div class="card">
                 <div class="section-block-heading">
                   <div>
@@ -661,164 +687,156 @@
                 </div>
                 <p class="hint">Если сцена уже запущена, кнопка применит изменения сразу. Если нет, она просто сохранит выбранный чат, тему, состав и роли для следующего запуска.</p>
               </div>
-
-              <div class="card">
-                <div class="section-block-heading">
-                  <div>
-                    <h3>Командные роли</h3>
-                    <p class="hint">У каждого участника можно быстро уточнить роль и индивидуальный промпт.</p>
-                  </div>
-                </div>
-                <div id="groupChatRolesBox"></div>
-              </div>
             </div>
 
-            <div class="page-grid">
-              <div class="card">
-                <div class="card-header">
-                  <h3>Расписание и квоты</h3>
-                  <button class="btn btn-sm primary" id="btnSaveGroupChatSettings">Сохранить настройки</button>
-                </div>
-                <div class="grid2">
-                  <label class="inline-check"><input type="checkbox" id="gc_use_schedule" checked> Работать по расписанию</label>
-                  <label class="inline-check"><input type="checkbox" id="gc_resume_next_day" checked> Продолжать на следующий день</label>
-                  <div>
-                    <label class="label">Смещение TZ (часов, пусто = ПК)</label>
-                    <input type="number" id="gc_timezone_offset_hours" step="0.5" placeholder="пусто = локально">
+            <div class="group-chat-section" data-gc-section="limits">
+              <div class="page-grid">
+                <div class="card">
+                  <div class="card-header">
+                    <h3>Расписание и квоты</h3>
+                    <button class="btn btn-sm primary" id="btnSaveGroupChatSettings">Сохранить настройки</button>
                   </div>
-                  <div>
-                    <label class="label">Вероятность онлайна (0–1)</label>
-                    <input type="number" id="gc_online_probability" min="0" max="1" step="0.05" value="0.55">
-                  </div>
-                  <div>
-                    <label class="label">Тихая пауза мин (мин–макс)</label>
-                    <div class="btn-row">
-                      <input type="number" id="gc_quiet_break_min_min" value="15" style="width:6rem">
-                      <input type="number" id="gc_quiet_break_max_min" value="90" style="width:6rem">
+                  <div class="grid2">
+                    <label class="inline-check"><input type="checkbox" id="gc_use_schedule" checked> Работать по расписанию</label>
+                    <label class="inline-check"><input type="checkbox" id="gc_resume_next_day" checked> Продолжать на следующий день</label>
+                    <div>
+                      <label class="label">Смещение TZ (часов, пусто = ПК)</label>
+                      <input type="number" id="gc_timezone_offset_hours" step="0.5" placeholder="пусто = локально">
+                    </div>
+                    <div>
+                      <label class="label">Вероятность онлайна (0–1)</label>
+                      <input type="number" id="gc_online_probability" min="0" max="1" step="0.05" value="0.55">
+                    </div>
+                    <div>
+                      <label class="label">Тихая пауза мин (мин–макс)</label>
+                      <div class="btn-row">
+                        <input type="number" id="gc_quiet_break_min_min" value="15" style="width:6rem">
+                        <input type="number" id="gc_quiet_break_max_min" value="90" style="width:6rem">
+                      </div>
+                    </div>
+                    <div>
+                      <label class="label">Шанс тихой паузы (0–1)</label>
+                      <input type="number" id="gc_quiet_break_chance" min="0" max="1" step="0.01" value="0.12">
                     </div>
                   </div>
-                  <div>
-                    <label class="label">Шанс тихой паузы (0–1)</label>
-                    <input type="number" id="gc_quiet_break_chance" min="0" max="1" step="0.01" value="0.12">
-                  </div>
-                </div>
-                <label class="label">Окна активности (JSON: days 0=Пн…6=Вс, start/end HH:MM)</label>
-                <textarea id="gc_activity_windows" rows="5"></textarea>
-                <div class="grid2" style="margin-top:1rem">
-                  <div>
-                    <label class="label">Лимит / аккаунт / сессия</label>
-                    <input type="number" id="gc_max_messages_per_account_session" value="40">
-                  </div>
-                  <div>
-                    <label class="label">Лимит / аккаунт / час</label>
-                    <input type="number" id="gc_max_messages_per_account_hour" value="12">
-                  </div>
-                  <div>
-                    <label class="label">Лимит / аккаунт / день</label>
-                    <input type="number" id="gc_max_messages_per_account_day" value="30">
-                  </div>
-                  <div>
-                    <label class="label">Лимит группы / день</label>
-                    <input type="number" id="gc_max_messages_group_day" value="80">
-                  </div>
-                  <div>
-                    <label class="label">Burst мин–макс</label>
-                    <div class="btn-row">
-                      <input type="number" id="gc_burst_min" value="1" style="width:6rem">
-                      <input type="number" id="gc_burst_max" value="3" style="width:6rem">
+                  <label class="label">Окна активности (JSON: days 0=Пн…6=Вс, start/end HH:MM)</label>
+                  <textarea id="gc_activity_windows" rows="5"></textarea>
+                  <div class="grid2" style="margin-top:1rem">
+                    <div>
+                      <label class="label">Лимит / аккаунт / сессия</label>
+                      <input type="number" id="gc_max_messages_per_account_session" value="40">
+                    </div>
+                    <div>
+                      <label class="label">Лимит / аккаунт / час</label>
+                      <input type="number" id="gc_max_messages_per_account_hour" value="12">
+                    </div>
+                    <div>
+                      <label class="label">Лимит / аккаунт / день</label>
+                      <input type="number" id="gc_max_messages_per_account_day" value="30">
+                    </div>
+                    <div>
+                      <label class="label">Лимит группы / день</label>
+                      <input type="number" id="gc_max_messages_group_day" value="80">
+                    </div>
+                    <div>
+                      <label class="label">Burst мин–макс</label>
+                      <div class="btn-row">
+                        <input type="number" id="gc_burst_min" value="1" style="width:6rem">
+                        <input type="number" id="gc_burst_max" value="3" style="width:6rem">
+                      </div>
+                    </div>
+                    <div>
+                      <label class="label">Макс. подряд один спикер</label>
+                      <input type="number" id="gc_max_consecutive_same_speaker" value="3">
                     </div>
                   </div>
-                  <div>
-                    <label class="label">Макс. подряд один спикер</label>
-                    <input type="number" id="gc_max_consecutive_same_speaker" value="3">
-                  </div>
                 </div>
-              </div>
 
-              <div class="card">
-                <div class="card-header"><h3>Тайминги и стиль</h3></div>
-                <div class="grid2">
-                  <div>
-                    <label class="label">Пауза между спикерами (сек)</label>
-                    <div class="btn-row">
-                      <input type="number" id="gc_delay_between_speakers_min_sec" value="25" style="width:6rem">
-                      <input type="number" id="gc_delay_between_speakers_max_sec" value="120" style="width:6rem">
+                <div class="card">
+                  <div class="card-header"><h3>Тайминги и стиль</h3></div>
+                  <div class="grid2">
+                    <div>
+                      <label class="label">Пауза между спикерами (сек)</label>
+                      <div class="btn-row">
+                        <input type="number" id="gc_delay_between_speakers_min_sec" value="25" style="width:6rem">
+                        <input type="number" id="gc_delay_between_speakers_max_sec" value="120" style="width:6rem">
+                      </div>
+                    </div>
+                    <div>
+                      <label class="label">Пауза внутри burst (сек)</label>
+                      <div class="btn-row">
+                        <input type="number" id="gc_delay_within_burst_min_sec" value="3" style="width:6rem">
+                        <input type="number" id="gc_delay_within_burst_max_sec" value="12" style="width:6rem">
+                      </div>
+                    </div>
+                    <div>
+                      <label class="label">Шанс «прочитал и ждёт»</label>
+                      <input type="number" id="gc_read_and_wait_chance" min="0" max="1" step="0.05" value="0.25">
+                    </div>
+                    <div>
+                      <label class="label">Ожидание после прочтения (сек)</label>
+                      <div class="btn-row">
+                        <input type="number" id="gc_read_and_wait_min_sec" value="20" style="width:6rem">
+                        <input type="number" id="gc_read_and_wait_max_sec" value="90" style="width:6rem">
+                      </div>
+                    </div>
+                    <div>
+                      <label class="label">Шанс короткой реплики</label>
+                      <input type="number" id="gc_short_reply_chance" min="0" max="1" step="0.05" value="0.35">
+                    </div>
+                    <label class="inline-check"><input type="checkbox" id="gc_reply_to_humans_enabled" checked> Отвечать живым участникам</label>
+                    <label class="inline-check"><input type="checkbox" id="gc_reply_to_humans_only_on_quote" checked> Только если процитировали нашего участника</label>
+                    <div>
+                      <label class="label">Шанс ответа живому участнику</label>
+                      <input type="number" id="gc_reply_to_humans_chance" min="0" max="1" step="0.05" value="0.85">
+                    </div>
+                    <div>
+                      <label class="label">Пауза между ответами живым (сек)</label>
+                      <div class="btn-row">
+                        <input type="number" id="gc_reply_to_humans_cooldown_min_sec" value="45" style="width:6rem">
+                        <input type="number" id="gc_reply_to_humans_cooldown_max_sec" value="150" style="width:6rem">
+                      </div>
+                    </div>
+                    <div>
+                      <label class="label">Стиль реплик</label>
+                      <select id="gc_reply_style">
+                        <option value="mixed">смешанный</option>
+                        <option value="short">короткие</option>
+                        <option value="medium">средние</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="label">Язык</label>
+                      <input type="text" id="gc_language" value="ru">
+                    </div>
+                    <div>
+                      <label class="label">Temperature / max tokens</label>
+                      <div class="btn-row">
+                        <input type="number" id="gc_temperature" step="0.1" value="0.9" style="width:6rem">
+                        <input type="number" id="gc_max_tokens" value="250" style="width:6rem">
+                      </div>
+                    </div>
+                    <div>
+                      <label class="label">История (сообщений)</label>
+                      <input type="number" id="gc_history_limit" value="40">
+                    </div>
+                    <div>
+                      <label class="inline-check" style="margin-top:1.5rem"><input type="checkbox" id="gc_split_long_messages" checked> Дробить длинные</label>
+                    </div>
+                    <div>
+                      <label class="label">Дробить от N символов / макс. частей</label>
+                      <div class="btn-row">
+                        <input type="number" id="gc_split_at_chars" value="280" style="width:6rem">
+                        <input type="number" id="gc_split_parts_max" value="3" style="width:6rem">
+                      </div>
+                    </div>
+                    <div>
+                      <label class="label">Стоп-слова (через запятую)</label>
+                      <input type="text" id="gc_stop_keywords" value="стоп боты, stop bots">
                     </div>
                   </div>
-                  <div>
-                    <label class="label">Пауза внутри burst (сек)</label>
-                    <div class="btn-row">
-                      <input type="number" id="gc_delay_within_burst_min_sec" value="3" style="width:6rem">
-                      <input type="number" id="gc_delay_within_burst_max_sec" value="12" style="width:6rem">
-                    </div>
-                  </div>
-                  <div>
-                    <label class="label">Шанс «прочитал и ждёт»</label>
-                    <input type="number" id="gc_read_and_wait_chance" min="0" max="1" step="0.05" value="0.25">
-                  </div>
-                  <div>
-                    <label class="label">Ожидание после прочтения (сек)</label>
-                    <div class="btn-row">
-                      <input type="number" id="gc_read_and_wait_min_sec" value="20" style="width:6rem">
-                      <input type="number" id="gc_read_and_wait_max_sec" value="90" style="width:6rem">
-                    </div>
-                  </div>
-                  <div>
-                    <label class="label">Шанс короткой реплики</label>
-                    <input type="number" id="gc_short_reply_chance" min="0" max="1" step="0.05" value="0.35">
-                  </div>
-                  <label class="inline-check"><input type="checkbox" id="gc_reply_to_humans_enabled" checked> Отвечать живым участникам</label>
-                  <label class="inline-check"><input type="checkbox" id="gc_reply_to_humans_only_on_quote" checked> Только если процитировали нашего участника</label>
-                  <div>
-                    <label class="label">Шанс ответа живому участнику</label>
-                    <input type="number" id="gc_reply_to_humans_chance" min="0" max="1" step="0.05" value="0.85">
-                  </div>
-                  <div>
-                    <label class="label">Пауза между ответами живым (сек)</label>
-                    <div class="btn-row">
-                      <input type="number" id="gc_reply_to_humans_cooldown_min_sec" value="45" style="width:6rem">
-                      <input type="number" id="gc_reply_to_humans_cooldown_max_sec" value="150" style="width:6rem">
-                    </div>
-                  </div>
-                  <div>
-                    <label class="label">Стиль реплик</label>
-                    <select id="gc_reply_style">
-                      <option value="mixed">смешанный</option>
-                      <option value="short">короткие</option>
-                      <option value="medium">средние</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label class="label">Язык</label>
-                    <input type="text" id="gc_language" value="ru">
-                  </div>
-                  <div>
-                    <label class="label">Temperature / max tokens</label>
-                    <div class="btn-row">
-                      <input type="number" id="gc_temperature" step="0.1" value="0.9" style="width:6rem">
-                      <input type="number" id="gc_max_tokens" value="250" style="width:6rem">
-                    </div>
-                  </div>
-                  <div>
-                    <label class="label">История (сообщений)</label>
-                    <input type="number" id="gc_history_limit" value="40">
-                  </div>
-                  <div>
-                    <label class="inline-check" style="margin-top:1.5rem"><input type="checkbox" id="gc_split_long_messages" checked> Дробить длинные</label>
-                  </div>
-                  <div>
-                    <label class="label">Дробить от N символов / макс. частей</label>
-                    <div class="btn-row">
-                      <input type="number" id="gc_split_at_chars" value="280" style="width:6rem">
-                      <input type="number" id="gc_split_parts_max" value="3" style="width:6rem">
-                    </div>
-                  </div>
-                  <div>
-                    <label class="label">Стоп-слова (через запятую)</label>
-                    <input type="text" id="gc_stop_keywords" value="стоп боты, stop bots">
-                  </div>
+                  <p id="groupChatSettingsMsg" class="msg"></p>
                 </div>
-                <p id="groupChatSettingsMsg" class="msg"></p>
               </div>
             </div>
           </div>

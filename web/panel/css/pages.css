@@ -296,6 +296,31 @@
   grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.95fr);
 }
 
+.group-chat-overview {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.group-chat-subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.group-chat-subnav .btn.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-panel));
+}
+
+.group-chat-section {
+  display: none;
+  gap: 1rem;
+}
+
+.group-chat-section.active {
+  display: grid;
+}
+
 .group-chat-main {
   display: flex;
   flex-direction: column;

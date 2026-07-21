@@ -38,6 +38,7 @@ const $$ = (sel) => document.querySelectorAll(sel);
 
 let selectedProxyId = null;
 let groupChatStatusCache = null;
+let activeGroupChatSection = "team";
 const PANEL_POLL_INTERVALS = {
   statusVisible: 2000,
   statusHidden: 8000,
@@ -155,6 +156,30 @@ P.showTab = function(name) {
     localStorage.setItem("panel.activeTab", name);
   } catch (_) {}
   P.requestPanelPoll(80, true);
+}
+
+P.setGroupChatSection = function(name) {
+  const next = ["team", "scene", "limits"].includes(name) ? name : "team";
+  activeGroupChatSection = next;
+  P.$$("[data-gc-nav]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.gcNav === next);
+  });
+  P.$$("[data-gc-section]").forEach((section) => {
+    section.classList.toggle("active", section.dataset.gcSection === next);
+  });
+  try {
+    localStorage.setItem("groupchat.activeSection", next);
+  } catch (_) {}
+}
+
+P.initGroupChatSectionNav = function() {
+  try {
+    activeGroupChatSection = localStorage.getItem("groupchat.activeSection") || activeGroupChatSection;
+  } catch (_) {}
+  P.$$("[data-gc-nav]").forEach((btn) => {
+    btn.addEventListener("click", () => P.setGroupChatSection(btn.dataset.gcNav));
+  });
+  P.setGroupChatSection(activeGroupChatSection);
 }
 
 P.initNavigation = function() {
@@ -2487,6 +2512,7 @@ P.stopGroupChat = async function() {
 }
 
 P.loadGroupChat = async function() {
+  P.setGroupChatSection(activeGroupChatSection);
   P.renderGroupChatAccounts();
   await P.loadGroupChatSettings();
   P.renderGroupChatVenuePreview();
@@ -2612,6 +2638,7 @@ P.bootstrap = async function() {
   if (window.__panelBootStarted) return;
   window.__panelBootStarted = true;
   P.initNavigation();
+  P.initGroupChatSectionNav();
   await Promise.allSettled([
     P.loadConfig(),
     P.loadProxyPool(),
