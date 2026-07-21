@@ -78,6 +78,7 @@ class GroupChatEngine:
         self._pending_external_replies: list[dict[str, Any]] = []
         self._handled_external_msg_ids: set[int] = set()
         self._next_external_reply_after: float = 0.0
+        self._active_chat_id: int = 0
 
     def stop(self) -> None:
         self._stop.set()
@@ -93,6 +94,35 @@ class GroupChatEngine:
 
     def _refresh_pending_stats(self) -> None:
         self.stats.pending_external_replies = len(self._pending_external_replies)
+
+    def _refresh_runtime_settings(self) -> None:
+        self.settings = GroupChatSettings.load(self._settings_path())
+
+    def _apply_runtime_session(self, session: GroupSessionRecord) -> GroupSessionRecord:
+        chat_switched = self._active_chat_id and self._active_chat_id != int(session.chat_id)
+        if chat_switched:
+            self.log(
+                f"↻ Переключаем сцену на чат "
+                f"{session.chat_title or session.chat_id} / {session.topic or '—'}"
+            )
+            self._known_msg_ids = set()
+            self._pending_external_replies = []
+            self._handled_external_msg_ids = set()
+            self._next_external_reply_after = 0.0
+            self._last_speakers = []
+            self._in_quiet_until = 0.0
+
+        self._active_chat_id = int(session.chat_id)
+        self.stats.chat_id = session.chat_id
+        self.stats.chat_title = session.chat_title
+        self.stats.topic = session.topic
+        self.stats.account_ids = list(session.account_ids)
+        self.stats.session_counts = dict(session.session_counts)
+        self.stats.day_counts = dict(session.day_counts)
+        self.stats.group_day_count = session.group_day_count
+        self.stats.recent_messages = [message.to_dict() for message in session.messages[-12:]]
+        self._refresh_pending_stats()
+        return session
 
     @staticmethod
     def _find_message_by_id(session: GroupSessionRecord, msg_id: int | None) -> dict[str, Any] | None:
@@ -528,6 +558,7 @@ class GroupChatEngine:
             group_day_count=0,
         )
         self.state.upsert_group_session(session)
+        self._active_chat_id = session.chat_id
 
         self.stats = GroupChatStats(
             running=True,
@@ -540,6 +571,7 @@ class GroupChatEngine:
             day_counts=dict(session.day_counts),
             pending_external_replies=0,
         )
+        self._apply_runtime_session(session)
         self._emit()
 
         try:
@@ -580,6 +612,7 @@ class GroupChatEngine:
                     pass
                 self.state.upsert_group_session(session)
                 self.stats.chat_title = session.chat_title
+            session = self._apply_runtime_session(session)
 
             self.log(
                 f"▶ Групповой чат «{session.chat_title or session.chat_id}», "
@@ -590,7 +623,9 @@ class GroupChatEngine:
 
             last_sync = 0.0
             while not self._stop.is_set():
+                self._refresh_runtime_settings()
                 session = self.state.group_session or session
+                session = self._apply_runtime_session(session)
                 self._ensure_day_counters(session)
 
                 now_mono = asyncio.get_event_loop().time()
@@ -598,6 +633,7 @@ class GroupChatEngine:
                     await self._sync_history(session, primary)
                     last_sync = now_mono
                     session = self.state.group_session or session
+                    session = self._apply_runtime_session(session)
                     if self._stop.is_set():
                         break
 

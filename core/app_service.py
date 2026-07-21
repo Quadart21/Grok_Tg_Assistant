@@ -55,7 +55,7 @@ from core.tdata_converter import (
     verify_converted_session,
 )
 from core.profile_generator import generate_profile, preview_profiles
-from core.state_store import StateStore
+from core.state_store import GroupSessionRecord, StateStore
 from core.telegram_client import TelegramAccountClient, format_telegram_error
 
 
@@ -1396,6 +1396,103 @@ class AppService:
         self.group_chat_thread.start()
         self.log(f"▶ Групповой чат: {', '.join(account_ids)} → {chat_title or chat_id}")
         return True, "OK"
+
+    def apply_group_chat_scene(
+        self,
+        account_ids: list[str],
+        chat_id: int,
+        topic: str,
+        role_overrides: dict[str, dict] | None = None,
+        activity_weights: dict[str, float] | None = None,
+        extra_context: str = "",
+        chat_title: str = "",
+    ) -> tuple[bool, str]:
+        with self._lock:
+            if not self._group_chat_running:
+                return False, "Групповой чат не запущен"
+            if len(account_ids) < 2:
+                return False, "Выберите минимум 2 аккаунта"
+            if not chat_id:
+                return False, "Выберите общий чат"
+
+            sessions = discover_sessions(self.base_dir / self.config.sessions_dir)
+            session_ids = {s.account_id for s in sessions}
+            missing = [a for a in account_ids if a not in session_ids]
+            if missing:
+                return False, f"Аккаунты не найдены: {', '.join(missing[:3])}"
+
+            requested_ids = set(account_ids)
+            running_ids = set(self._group_chat_account_ids)
+            missing_running = [aid for aid in account_ids if aid not in running_ids]
+            if missing_running:
+                return False, (
+                    "Нельзя добавить новые аккаунты в уже запущенную сцену: "
+                    f"{', '.join(missing_running[:3])}. Остановите сцену и запустите заново."
+                )
+
+            roles = RolesConfig.load(self.base_dir / self.config.roles_file)
+            overrides = role_overrides or {}
+            weights_input = activity_weights or {}
+            role_prompts: dict[str, str] = {}
+            role_names: dict[str, str] = {}
+            weights: dict[str, float] = {}
+
+            for aid in account_ids:
+                override = overrides.get(aid) or {}
+                prompt = str(override.get("role_prompt") or "").strip() or roles.prompt_for_account(aid)
+                name = (
+                    str(override.get("role_name") or "").strip()
+                    or roles.role_name_for_account(aid)
+                    or "участник"
+                )
+                role_prompts[aid] = prompt
+                role_names[aid] = name
+                weights[aid] = float(weights_input.get(aid, 1.0) or 1.0)
+
+            current = self.state_store.group_session
+            session = GroupSessionRecord(
+                chat_id=int(chat_id),
+                topic=topic.strip(),
+                chat_title=chat_title.strip(),
+                account_ids=list(account_ids),
+                role_prompts=role_prompts,
+                role_names=role_names,
+                activity_weights=weights,
+                extra_context=extra_context.strip(),
+                status="active",
+                created_at=current.created_at if current else "",
+                last_activity=current.last_activity if current else "",
+                messages=list(current.messages) if current else [],
+                session_counts={
+                    aid: (current.session_counts.get(aid, 0) if current else 0)
+                    for aid in account_ids
+                },
+                day_counts={
+                    aid: (current.day_counts.get(aid, 0) if current else 0)
+                    for aid in account_ids
+                },
+                day_key=current.day_key if current else "",
+                group_day_count=current.group_day_count if current else 0,
+            )
+            self.state_store.upsert_group_session(session)
+            self._group_chat_account_ids = requested_ids
+            self._group_chat_stats.chat_id = session.chat_id
+            self._group_chat_stats.chat_title = session.chat_title
+            self._group_chat_stats.topic = session.topic
+            self._group_chat_stats.account_ids = list(account_ids)
+            self._group_chat_stats.session_counts = dict(session.session_counts)
+            self._group_chat_stats.day_counts = dict(session.day_counts)
+            self._group_chat_stats.group_day_count = session.group_day_count
+            self._group_chat_stats.recent_messages = [
+                message.to_dict() for message in session.messages[-12:]
+            ]
+            self._group_chat_stats.status_text = "сцена обновлена"
+
+        self.log(
+            f"↻ Групповой чат обновлён: {', '.join(account_ids)} → "
+            f"{chat_title.strip() or chat_id} / {topic.strip() or '—'}"
+        )
+        return True, "Сцена обновлена"
 
     def stop_group_chat(self) -> None:
         if self.group_chat_engine:

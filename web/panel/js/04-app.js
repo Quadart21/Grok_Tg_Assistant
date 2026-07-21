@@ -2194,6 +2194,44 @@ P.loadGroupChatSettings = async function() {
   P.setGroupChatPresetUi(groupChatPreset);
 }
 
+P.buildGroupChatScenePayload = function() {
+  P.snapshotGroupChatDrafts();
+  const ids = P.groupChatSelectedAccounts().map((item) => item.id);
+  const chatId = Number(P.$("#groupChatSelect").value || 0);
+  const topic = P.$("#groupChatTopic").value.trim();
+  const chat = P.state.groupChatCommonCache.find((c) => Number(c.chat_id) === chatId);
+  const role_overrides = {};
+  const activity_weights = {};
+  ids.forEach((id) => {
+    const draft = groupChatRoleDrafts.get(id) || {};
+    role_overrides[id] = {
+      role_name: draft.role_name || P.state.roleAssignments[id] || "участник",
+      role_prompt: draft.role_prompt || "",
+    };
+    activity_weights[id] = groupChatWeightOverrides.get(id) || 1;
+  });
+  return {
+    account_ids: ids,
+    chat_id: chatId,
+    chat_title: chat?.title || "",
+    topic,
+    extra_context: P.$("#groupChatExtra").value,
+    role_overrides,
+    activity_weights,
+  };
+}
+
+P.applyGroupChatScene = async function() {
+  const payload = P.buildGroupChatScenePayload();
+  if (payload.account_ids.length < 2) throw new Error("Выберите минимум 2 аккаунта");
+  if (!payload.chat_id) throw new Error("Выберите общий чат");
+  if (!payload.topic) throw new Error("Укажите тему");
+  return P.api("/api/group-chat/apply", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 P.saveGroupChatSettings = async function() {
   const payload = {};
   P.GROUP_CHAT_SETTING_FIELDS.forEach((key) => {
@@ -2214,7 +2252,15 @@ P.saveGroupChatSettings = async function() {
   payload.stop_keywords = P.$("#gc_stop_keywords").value.split(",").map((x) => x.trim()).filter(Boolean);
   try {
     await P.api("/api/group-chat/settings", { method: "POST", body: JSON.stringify(payload) });
-    P.$("#groupChatSettingsMsg").textContent = "Настройки сохранены";
+    const status = await P.api("/api/group-chat/status");
+    if (status.running) {
+      await P.applyGroupChatScene();
+      P.$("#groupChatSettingsMsg").textContent = "Настройки и сцена применены";
+      P.$("#groupChatMsg").textContent = "Сцена обновлена без перезапуска";
+      await P.refreshGroupChatStatus();
+    } else {
+      P.$("#groupChatSettingsMsg").textContent = "Настройки сохранены";
+    }
     return true;
   } catch (e) {
     P.$("#groupChatSettingsMsg").textContent = e.message;
@@ -2314,38 +2360,16 @@ P.refreshGroupChatStatus = async function() {
 }
 
 P.startGroupChat = async function() {
-  P.snapshotGroupChatDrafts();
-  const ids = P.groupChatSelectedAccounts().map((item) => item.id);
-  if (ids.length < 2) return alert("Выберите минимум 2 аккаунта");
-  const chatId = Number(P.$("#groupChatSelect").value || 0);
-  if (!chatId) return alert("Выберите общий чат");
-  const topic = P.$("#groupChatTopic").value.trim();
-  if (!topic) return alert("Укажите тему");
-  const chat = P.state.groupChatCommonCache.find((c) => Number(c.chat_id) === chatId);
-  const role_overrides = {};
-  const activity_weights = {};
-  ids.forEach((id) => {
-    const draft = groupChatRoleDrafts.get(id) || {};
-    role_overrides[id] = {
-      role_name: draft.role_name || P.state.roleAssignments[id] || "участник",
-      role_prompt: draft.role_prompt || "",
-    };
-    activity_weights[id] = groupChatWeightOverrides.get(id) || 1;
-  });
+  const payload = P.buildGroupChatScenePayload();
+  if (payload.account_ids.length < 2) return alert("Выберите минимум 2 аккаунта");
+  if (!payload.chat_id) return alert("Выберите общий чат");
+  if (!payload.topic) return alert("Укажите тему");
   try {
     const saved = await P.saveGroupChatSettings();
     if (!saved) return;
     await P.api("/api/group-chat/start", {
       method: "POST",
-      body: JSON.stringify({
-        account_ids: ids,
-        chat_id: chatId,
-        chat_title: chat?.title || "",
-        topic,
-        extra_context: P.$("#groupChatExtra").value,
-        role_overrides,
-        activity_weights,
-      }),
+      body: JSON.stringify(payload),
     });
     P.$("#groupChatMsg").textContent = "Сцена запущена";
     await P.refreshStatus();

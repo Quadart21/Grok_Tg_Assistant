@@ -2178,6 +2178,44 @@ async function loadGroupChatSettings() {
   setGroupChatPresetUi(groupChatPreset);
 }
 
+function buildGroupChatScenePayload() {
+  snapshotGroupChatDrafts();
+  const ids = groupChatSelectedAccounts().map((item) => item.id);
+  const chatId = Number($("#groupChatSelect").value || 0);
+  const topic = $("#groupChatTopic").value.trim();
+  const chat = groupChatCommonCache.find((c) => Number(c.chat_id) === chatId);
+  const role_overrides = {};
+  const activity_weights = {};
+  ids.forEach((id) => {
+    const draft = groupChatRoleDrafts.get(id) || {};
+    role_overrides[id] = {
+      role_name: draft.role_name || roleAssignments[id] || "участник",
+      role_prompt: draft.role_prompt || "",
+    };
+    activity_weights[id] = groupChatWeightOverrides.get(id) || 1;
+  });
+  return {
+    account_ids: ids,
+    chat_id: chatId,
+    chat_title: chat?.title || "",
+    topic,
+    extra_context: $("#groupChatExtra").value,
+    role_overrides,
+    activity_weights,
+  };
+}
+
+async function applyGroupChatScene() {
+  const payload = buildGroupChatScenePayload();
+  if (payload.account_ids.length < 2) throw new Error("Выберите минимум 2 аккаунта");
+  if (!payload.chat_id) throw new Error("Выберите общий чат");
+  if (!payload.topic) throw new Error("Укажите тему");
+  return api("/api/group-chat/apply", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 async function saveGroupChatSettings() {
   const payload = {};
   GROUP_CHAT_SETTING_FIELDS.forEach((key) => {
@@ -2198,7 +2236,15 @@ async function saveGroupChatSettings() {
   payload.stop_keywords = $("#gc_stop_keywords").value.split(",").map((x) => x.trim()).filter(Boolean);
   try {
     await api("/api/group-chat/settings", { method: "POST", body: JSON.stringify(payload) });
-    $("#groupChatSettingsMsg").textContent = "Настройки сохранены";
+    const status = await api("/api/group-chat/status");
+    if (status.running) {
+      await applyGroupChatScene();
+      $("#groupChatSettingsMsg").textContent = "Настройки и сцена применены";
+      $("#groupChatMsg").textContent = "Сцена обновлена без перезапуска";
+      await refreshGroupChatStatus();
+    } else {
+      $("#groupChatSettingsMsg").textContent = "Настройки сохранены";
+    }
     return true;
   } catch (e) {
     $("#groupChatSettingsMsg").textContent = e.message;
@@ -2298,38 +2344,16 @@ async function refreshGroupChatStatus() {
 }
 
 async function startGroupChat() {
-  snapshotGroupChatDrafts();
-  const ids = groupChatSelectedAccounts().map((item) => item.id);
-  if (ids.length < 2) return alert("Выберите минимум 2 аккаунта");
-  const chatId = Number($("#groupChatSelect").value || 0);
-  if (!chatId) return alert("Выберите общий чат");
-  const topic = $("#groupChatTopic").value.trim();
-  if (!topic) return alert("Укажите тему");
-  const chat = groupChatCommonCache.find((c) => Number(c.chat_id) === chatId);
-  const role_overrides = {};
-  const activity_weights = {};
-  ids.forEach((id) => {
-    const draft = groupChatRoleDrafts.get(id) || {};
-    role_overrides[id] = {
-      role_name: draft.role_name || roleAssignments[id] || "участник",
-      role_prompt: draft.role_prompt || "",
-    };
-    activity_weights[id] = groupChatWeightOverrides.get(id) || 1;
-  });
+  const payload = buildGroupChatScenePayload();
+  if (payload.account_ids.length < 2) return alert("Выберите минимум 2 аккаунта");
+  if (!payload.chat_id) return alert("Выберите общий чат");
+  if (!payload.topic) return alert("Укажите тему");
   try {
     const saved = await saveGroupChatSettings();
     if (!saved) return;
     await api("/api/group-chat/start", {
       method: "POST",
-      body: JSON.stringify({
-        account_ids: ids,
-        chat_id: chatId,
-        chat_title: chat?.title || "",
-        topic,
-        extra_context: $("#groupChatExtra").value,
-        role_overrides,
-        activity_weights,
-      }),
+      body: JSON.stringify(payload),
     });
     $("#groupChatMsg").textContent = "Сцена запущена";
     await refreshStatus();
