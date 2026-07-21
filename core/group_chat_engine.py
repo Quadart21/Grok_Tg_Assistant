@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Callable
 
@@ -167,6 +169,113 @@ class GroupChatEngine:
             f"[{session.role_names.get(speaker, 'роль')}]"
         )
 
+    @staticmethod
+    def _normalize_message(text: str) -> str:
+        normalized = re.sub(r"\s+", " ", (text or "").strip().lower())
+        normalized = re.sub(r"[^\w\s]+", "", normalized, flags=re.UNICODE)
+        return normalized.strip()
+
+    def _find_recent_duplicate(
+        self, session: GroupSessionRecord, text: str
+    ) -> dict[str, Any] | None:
+        candidate = self._normalize_message(text)
+        if not candidate:
+            return None
+
+        window = max(1, int(self.settings.dedupe_recent_messages_window or 1))
+        threshold = min(
+            0.99,
+            max(0.0, float(self.settings.dedupe_similarity_threshold or 0.0)),
+        )
+        for message in reversed(session.messages[-window:]):
+            existing = self._normalize_message(message.text)
+            if not existing:
+                continue
+            if candidate == existing:
+                return {"message": message, "reason": "exact", "similarity": 1.0}
+            if len(candidate) < 12 or len(existing) < 12:
+                continue
+            similarity = SequenceMatcher(None, candidate, existing).ratio()
+            if similarity >= threshold:
+                return {
+                    "message": message,
+                    "reason": "similar",
+                    "similarity": similarity,
+                }
+        return None
+
+    def _anti_repeat_context(
+        self,
+        session: GroupSessionRecord,
+        duplicate: dict[str, Any] | None,
+        base_context: str = "",
+    ) -> str:
+        parts: list[str] = []
+        if base_context.strip():
+            parts.append(base_context.strip())
+        if not duplicate:
+            return "\n".join(parts)
+
+        message = duplicate["message"]
+        quoted = (message.text or "").strip().replace("\n", " ")
+        quoted = quoted[:220]
+        speaker_name = message.speaker_name or message.speaker_account_id or "участник"
+        if session.topic.strip():
+            parts.append(f"Держись темы разговора: {session.topic.strip()}")
+        parts.append(f"Антидубль: не повторяй недавнюю реплику {speaker_name}: {quoted}")
+        parts.append(
+            "Сформулируй следующую мысль по-другому: новый угол, другие слова, без близкого перефраза."
+        )
+        return "\n".join(parts)
+
+    async def _generate_unique_group_message(
+        self,
+        llm: Any,
+        session: GroupSessionRecord,
+        speaker: str,
+        short_reply: bool,
+        extra_context: str = "",
+    ) -> str:
+        retries = max(0, int(self.settings.dedupe_retry_attempts or 0))
+        retry_context = extra_context.strip()
+
+        for attempt in range(retries + 1):
+            text = await llm.generate_group_message(
+                role_prompt=session.role_prompts.get(speaker, ""),
+                topic=session.topic,
+                transcript=self._build_transcript(session),
+                speaker_label=self._speaker_label(session, speaker),
+                participants=self._participants_labels(session),
+                language=self.settings.language,
+                extra_context=retry_context,
+                short_reply=short_reply,
+                temperature=self.settings.temperature,
+                max_tokens=self.settings.max_tokens,
+            )
+            text = (text or "").strip()
+            if not text:
+                return ""
+
+            duplicate = self._find_recent_duplicate(session, text)
+            if not duplicate:
+                return text
+
+            reason = "дословный повтор"
+            if duplicate["reason"] == "similar":
+                reason = f"слишком похоже ({duplicate['similarity']:.2f})"
+            self.log(
+                f"↻ {self._display_names.get(speaker, speaker)}: антидубль, "
+                f"попытка {attempt + 1}/{retries + 1} ({reason})"
+            )
+            if attempt >= retries:
+                self.log(
+                    f"■ {self._display_names.get(speaker, speaker)}: реплика отброшена антидублем"
+                )
+                return ""
+            retry_context = self._anti_repeat_context(session, duplicate, extra_context)
+
+        return ""
+
     def _queue_external_reply(
         self,
         *,
@@ -215,6 +324,16 @@ class GroupChatEngine:
                 break
             if not self._quota_ok(session, speaker):
                 break
+            duplicate = self._find_recent_duplicate(session, part)
+            if duplicate:
+                similarity = float(duplicate.get("similarity") or 0.0)
+                reason = "дословный повтор"
+                if duplicate.get("reason") == "similar":
+                    reason = f"слишком похоже ({similarity:.2f})"
+                self.log(
+                    f"■ {self._display_names.get(speaker, speaker)}: часть сообщения пропущена антидублем ({reason})"
+                )
+                continue
             typing_sec = self._typing_seconds(part)
             current_reply_to = reply_to_msg_id if idx == 0 else None
             current_reply_account = reply_to_speaker_account_id if idx == 0 else ""
@@ -710,17 +829,12 @@ class GroupChatEngine:
                     self.stats.status_text = f"{speaker}: отвечает живому участнику..."
                     self._emit()
                     try:
-                        text = await llm.generate_group_message(
-                            role_prompt=session.role_prompts.get(speaker, ""),
-                            topic=session.topic,
-                            transcript=self._build_transcript(session),
-                            speaker_label=self._speaker_label(session, speaker),
-                            participants=self._participants_labels(session),
-                            language=self.settings.language,
-                            extra_context="\n".join(part for part in context_parts if part),
-                            short_reply=True,
-                            temperature=self.settings.temperature,
-                            max_tokens=self.settings.max_tokens,
+                        text = await self._generate_unique_group_message(
+                            llm,
+                            session,
+                            speaker,
+                            True,
+                            "\n".join(part for part in context_parts if part),
                         )
                     except Exception as exc:
                         self.log(f"❌ LLM {speaker} (ответ живому): {exc}")
@@ -806,17 +920,12 @@ class GroupChatEngine:
                 self.stats.status_text = f"{speaker}: генерирует..."
                 self._emit()
                 try:
-                    text = await llm.generate_group_message(
-                        role_prompt=session.role_prompts.get(speaker, ""),
-                        topic=session.topic,
-                        transcript=self._build_transcript(session),
-                        speaker_label=self._speaker_label(session, speaker),
-                        participants=self._participants_labels(session),
-                        language=self.settings.language,
-                        extra_context=session.extra_context,
-                        short_reply=short,
-                        temperature=self.settings.temperature,
-                        max_tokens=self.settings.max_tokens,
+                    text = await self._generate_unique_group_message(
+                        llm,
+                        session,
+                        speaker,
+                        short,
+                        session.extra_context,
                     )
                 except Exception as exc:
                     self.log(f"❌ LLM {speaker}: {exc}")

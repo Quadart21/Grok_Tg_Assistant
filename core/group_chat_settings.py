@@ -77,6 +77,9 @@ class GroupChatSettings:
     split_long_messages: bool = True
     split_at_chars: int = 280
     split_parts_max: int = 3
+    dedupe_recent_messages_window: int = 16
+    dedupe_similarity_threshold: float = 0.9
+    dedupe_retry_attempts: int = 2
 
     # Контент / LLM
     language: str = "ru"
@@ -135,6 +138,9 @@ class GroupChatSettings:
             "split_long_messages": self.split_long_messages,
             "split_at_chars": self.split_at_chars,
             "split_parts_max": self.split_parts_max,
+            "dedupe_recent_messages_window": self.dedupe_recent_messages_window,
+            "dedupe_similarity_threshold": self.dedupe_similarity_threshold,
+            "dedupe_retry_attempts": self.dedupe_retry_attempts,
             "language": self.language,
             "history_limit": self.history_limit,
             "temperature": self.temperature,
@@ -190,6 +196,9 @@ class GroupChatSettings:
             split_long_messages=bool(data.get("split_long_messages", True)),
             split_at_chars=int(data.get("split_at_chars", 280)),
             split_parts_max=int(data.get("split_parts_max", 3)),
+            dedupe_recent_messages_window=int(data.get("dedupe_recent_messages_window", 16)),
+            dedupe_similarity_threshold=float(data.get("dedupe_similarity_threshold", 0.9)),
+            dedupe_retry_attempts=int(data.get("dedupe_retry_attempts", 2)),
             language=str(data.get("language", "ru")),
             history_limit=int(data.get("history_limit", 40)),
             temperature=float(data.get("temperature", 0.9)),
