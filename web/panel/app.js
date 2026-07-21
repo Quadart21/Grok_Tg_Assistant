@@ -12,14 +12,8 @@ let proxyFiltersInited = false;
 let selectedAgents = new Set();
 let selectedGroupChatAccounts = new Set();
 let groupChatCommonCache = [];
+let groupChatStatusCache = null;
 let logOffset = 0;
-let panelTickInFlight = false;
-let panelTickTimer = null;
-let panelTickCount = 0;
-
-const PANEL_POLL_FAST_MS = 2500;
-const PANEL_POLL_SLOW_EVERY = 3;
-const PANEL_POLL_HIDDEN_EVERY = 6;
 const PANEL_POLL_INTERVALS = {
   statusVisible: 2000,
   statusHidden: 8000,
@@ -150,18 +144,6 @@ function initNavigation() {
   showTab(initialTab);
 }
 
-function getActiveTab() {
-  return $("#tabNav [data-tab].active")?.dataset.tab || "outreach";
-}
-
-function shouldRefreshLogs(tab) {
-  return tab === "outreach" || tab === "dialogs" || tab === "group-chat";
-}
-
-function shouldRefreshGroupChat(tab) {
-  return tab === "group-chat";
-}
-
 let llmProviders = [];
 
 async function refreshStatus() {
@@ -202,6 +184,8 @@ async function refreshEngine() {
   if (e.running) {
     $("#engineStats").textContent =
       `Первых: ${e.success}/${e.total} · Ответов: ${e.replies_sent} · Ошибок: ${e.failed} · Диалогов: ${e.active_dialogs}`;
+  } else {
+    $("#engineStats").textContent = "Ожидание запуска";
   }
   try {
     const a = await api("/api/agents/stats");
@@ -219,13 +203,14 @@ async function refreshEngine() {
 }
 
 async function refreshLogs() {
+  const box = $("#logBox");
+  if (!box) return;
   const { lines, total } = await api(`/api/logs?offset=${logOffset}`);
   if (lines.length) {
-    const box = $("#logBox");
     box.textContent += lines.join("\n") + "\n";
     box.scrollTop = box.scrollHeight;
-    logOffset = total;
   }
+  logOffset = total;
 }
 
 function updateLlmHint(live) {
@@ -2337,6 +2322,24 @@ async function saveGroupChatSettings() {
 async function saveAndApplyGroupChatScene() {
   const saved = await saveGroupChatSettings();
   if (!saved) return;
+  const payload = buildGroupChatScenePayload();
+  if (payload.account_ids.length < 2) {
+    $("#groupChatMsg").textContent = "Выберите минимум 2 аккаунта";
+    return;
+  }
+  if (!payload.chat_id) {
+    $("#groupChatMsg").textContent = "Выберите общий чат";
+    return;
+  }
+  if (!payload.topic) {
+    $("#groupChatMsg").textContent = "Укажите тему";
+    return;
+  }
+  if (!groupChatStatusCache?.running) {
+    $("#groupChatMsg").textContent = "Сцена сохранена. Запустите групповой чат, чтобы применить новый чат и роли.";
+    renderGroupChatVenuePreview();
+    return;
+  }
   try {
     await applyGroupChatScene();
     delete $("#groupChatSelect").dataset.touched;
@@ -2435,6 +2438,7 @@ async function joinGroupChatByLink() {
 
 async function refreshGroupChatStatus() {
   const st = await api("/api/group-chat/status");
+  groupChatStatusCache = st;
   applyGroupChatStatus(st);
   syncGroupChatFromStatus(st);
 }
@@ -2549,40 +2553,43 @@ $("#btnResume").onclick = () => startEngine(true);
 $("#btnStop").onclick = async () => { await api("/api/engine/stop", { method: "POST" }); refreshStatus(); };
 
 async function tick() {
-  if (panelTickInFlight) return;
-  panelTickInFlight = true;
-  try {
-    const activeTab = getActiveTab();
-    const hiddenFactor = document.hidden ? PANEL_POLL_HIDDEN_EVERY : 1;
-    const shouldRunSlow = panelTickCount % (PANEL_POLL_SLOW_EVERY * hiddenFactor) === 0;
+  const now = Date.now();
+  await refreshStatus();
 
-    await refreshStatus();
+  if (shouldRefreshEnginePanel() && now - panelPollState.lastHeavyAt >= getHeavyPollInterval()) {
+    await refreshEngine();
+    panelPollState.lastHeavyAt = Date.now();
+  }
 
-    if (!document.hidden || shouldRunSlow) {
-      await refreshEngine();
-    }
+  if (shouldRefreshGroupChatPanel() && now - panelPollState.lastGroupChatAt >= getHeavyPollInterval()) {
+    try {
+      await refreshGroupChatStatus();
+      panelPollState.lastGroupChatAt = Date.now();
+    } catch (_) {}
+  }
 
-    if (shouldRefreshGroupChat(activeTab) && (!document.hidden || shouldRunSlow)) {
-      try {
-        await refreshGroupChatStatus();
-      } catch (_) {}
-    }
-
-    if (shouldRefreshLogs(activeTab) && shouldRunSlow) {
-      await refreshLogs();
-    }
-
-    panelTickCount += 1;
-  } finally {
-    panelTickInFlight = false;
+  if (shouldRefreshLogsPanel() && now - panelPollState.lastLogsAt >= getLogsPollInterval()) {
+    await refreshLogs();
+    panelPollState.lastLogsAt = Date.now();
   }
 }
 
-function startPanelPolling() {
-  if (panelTickTimer) return;
-  panelTickTimer = setInterval(() => {
-    tick().catch(() => {});
-  }, PANEL_POLL_FAST_MS);
+async function pollLoop(force = false) {
+  if (panelPollState.inFlight) return;
+  panelPollState.inFlight = true;
+  try {
+    if (force) {
+      panelPollState.lastHeavyAt = 0;
+      panelPollState.lastGroupChatAt = 0;
+      panelPollState.lastLogsAt = 0;
+    }
+    await tick();
+  } finally {
+    panelPollState.inFlight = false;
+    const nextForce = panelPollState.pendingImmediate;
+    panelPollState.pendingImmediate = false;
+    schedulePanelPoll(nextForce ? 150 : getStatusPollInterval(), nextForce);
+  }
 }
 
 async function bootstrap() {
@@ -2601,9 +2608,10 @@ async function bootstrap() {
     refreshStatus(),
   ]);
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) {
-      tick().catch(() => {});
-    }
+    requestPanelPoll(150, true);
   });
-  startPanelPolling();
+  window.addEventListener("focus", () => {
+    requestPanelPoll(120, true);
+  });
+  await pollLoop(true);
 }

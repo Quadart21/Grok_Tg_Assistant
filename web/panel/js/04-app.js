@@ -37,6 +37,21 @@ const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
 let selectedProxyId = null;
+let groupChatStatusCache = null;
+const PANEL_POLL_INTERVALS = {
+  statusVisible: 2000,
+  statusHidden: 8000,
+  heavyVisible: 5000,
+  logsVisible: 2500,
+};
+const panelPollState = {
+  timer: null,
+  inFlight: false,
+  pendingImmediate: false,
+  lastHeavyAt: 0,
+  lastGroupChatAt: 0,
+  lastLogsAt: 0,
+};
 
 P.escapeHtml = function(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -82,6 +97,56 @@ P.syncPageHeader = function(name) {
   if (leadEl) leadEl.textContent = lead;
 }
 
+P.getActiveTab = function() {
+  return P.$(".panel.active")?.id?.replace("panel-", "") || "outreach";
+}
+
+P.isPanelVisible = function() {
+  return !document.hidden;
+}
+
+P.shouldRefreshEnginePanel = function() {
+  if (!P.isPanelVisible()) return false;
+  const tab = P.getActiveTab();
+  return tab === "outreach" || tab === "agents";
+}
+
+P.shouldRefreshGroupChatPanel = function() {
+  return P.isPanelVisible() && P.getActiveTab() === "groupchat";
+}
+
+P.shouldRefreshLogsPanel = function() {
+  return P.isPanelVisible() && P.getActiveTab() === "outreach";
+}
+
+P.getStatusPollInterval = function() {
+  return P.isPanelVisible() ? PANEL_POLL_INTERVALS.statusVisible : PANEL_POLL_INTERVALS.statusHidden;
+}
+
+P.getHeavyPollInterval = function() {
+  return PANEL_POLL_INTERVALS.heavyVisible;
+}
+
+P.getLogsPollInterval = function() {
+  return PANEL_POLL_INTERVALS.logsVisible;
+}
+
+P.schedulePanelPoll = function(delay = P.getStatusPollInterval(), force = false) {
+  if (panelPollState.timer) clearTimeout(panelPollState.timer);
+  panelPollState.timer = setTimeout(() => {
+    P.pollLoop(force).catch(() => {});
+  }, delay);
+}
+
+P.requestPanelPoll = function(delay = 120, force = true) {
+  if (!window.__panelBootStarted) return;
+  if (panelPollState.inFlight) {
+    panelPollState.pendingImmediate = panelPollState.pendingImmediate || force;
+    return;
+  }
+  P.schedulePanelPoll(delay, force);
+}
+
 P.showTab = function(name) {
   P.$$("#tabNav [data-tab]").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   P.$$(".panel").forEach((p) => p.classList.toggle("active", p.id === `panel-${name}`));
@@ -89,6 +154,7 @@ P.showTab = function(name) {
   try {
     localStorage.setItem("panel.activeTab", name);
   } catch (_) {}
+  P.requestPanelPoll(80, true);
 }
 
 P.initNavigation = function() {
@@ -141,6 +207,8 @@ P.refreshEngine = async function() {
   if (e.running) {
     P.$("#engineStats").textContent =
       `Первых: ${e.success}/${e.total} · Ответов: ${e.replies_sent} · Ошибок: ${e.failed} · Диалогов: ${e.active_dialogs}`;
+  } else {
+    P.$("#engineStats").textContent = "Ожидание запуска";
   }
   try {
     const a = await P.api("/api/agents/stats");
@@ -155,19 +223,17 @@ P.refreshEngine = async function() {
       }
     }
   } catch (_) {}
-  try {
-    await P.refreshGroupChatStatus();
-  } catch (_) {}
 }
 
 P.refreshLogs = async function() {
+  const box = P.$("#logBox");
+  if (!box) return;
   const { lines, total } = await P.api(`/api/logs?offset=${P.state.logOffset}`);
   if (lines.length) {
-    const box = P.$("#logBox");
     box.textContent += lines.join("\n") + "\n";
     box.scrollTop = box.scrollHeight;
-    P.state.logOffset = total;
   }
+  P.state.logOffset = total;
 }
 
 P.updateLlmHint = function(live) {
@@ -2272,6 +2338,24 @@ P.saveGroupChatSettings = async function() {
 P.saveAndApplyGroupChatScene = async function() {
   const saved = await P.saveGroupChatSettings();
   if (!saved) return;
+  const payload = P.buildGroupChatScenePayload();
+  if (payload.account_ids.length < 2) {
+    P.$("#groupChatMsg").textContent = "Выберите минимум 2 аккаунта";
+    return;
+  }
+  if (!payload.chat_id) {
+    P.$("#groupChatMsg").textContent = "Выберите общий чат";
+    return;
+  }
+  if (!payload.topic) {
+    P.$("#groupChatMsg").textContent = "Укажите тему";
+    return;
+  }
+  if (!groupChatStatusCache?.running) {
+    P.$("#groupChatMsg").textContent = "Сцена сохранена. Запустите групповой чат, чтобы применить новый чат и роли.";
+    P.renderGroupChatVenuePreview();
+    return;
+  }
   try {
     await P.applyGroupChatScene();
     delete P.$("#groupChatSelect").dataset.touched;
@@ -2370,6 +2454,7 @@ P.joinGroupChatByLink = async function() {
 
 P.refreshGroupChatStatus = async function() {
   const st = await P.api("/api/group-chat/status");
+  groupChatStatusCache = st;
   P.applyGroupChatStatus(st);
   P.syncGroupChatFromStatus(st);
 }
@@ -2484,9 +2569,43 @@ P.$("#btnResume").onclick = () => P.startEngine(true);
 P.$("#btnStop").onclick = async () => { await P.api("/api/engine/stop", { method: "POST" }); P.refreshStatus(); };
 
 P.tick = async function() {
+  const now = Date.now();
   await P.refreshStatus();
-  await P.refreshEngine();
-  await P.refreshLogs();
+
+  if (P.shouldRefreshEnginePanel() && now - panelPollState.lastHeavyAt >= P.getHeavyPollInterval()) {
+    await P.refreshEngine();
+    panelPollState.lastHeavyAt = Date.now();
+  }
+
+  if (P.shouldRefreshGroupChatPanel() && now - panelPollState.lastGroupChatAt >= P.getHeavyPollInterval()) {
+    try {
+      await P.refreshGroupChatStatus();
+      panelPollState.lastGroupChatAt = Date.now();
+    } catch (_) {}
+  }
+
+  if (P.shouldRefreshLogsPanel() && now - panelPollState.lastLogsAt >= P.getLogsPollInterval()) {
+    await P.refreshLogs();
+    panelPollState.lastLogsAt = Date.now();
+  }
+}
+
+P.pollLoop = async function(force = false) {
+  if (panelPollState.inFlight) return;
+  panelPollState.inFlight = true;
+  try {
+    if (force) {
+      panelPollState.lastHeavyAt = 0;
+      panelPollState.lastGroupChatAt = 0;
+      panelPollState.lastLogsAt = 0;
+    }
+    await P.tick();
+  } finally {
+    panelPollState.inFlight = false;
+    const nextForce = panelPollState.pendingImmediate;
+    panelPollState.pendingImmediate = false;
+    P.schedulePanelPoll(nextForce ? 150 : P.getStatusPollInterval(), nextForce);
+  }
 }
 
 P.bootstrap = async function() {
@@ -2504,11 +2623,13 @@ P.bootstrap = async function() {
     P.loadGroupChat(),
     P.refreshStatus(),
   ]);
-  if (!window.__panelTickHandle) {
-    window.__panelTickHandle = setInterval(() => {
-      P.tick().catch(() => {});
-    }, 1500);
-  }
+  document.addEventListener("visibilitychange", () => {
+    P.requestPanelPoll(150, true);
+  });
+  window.addEventListener("focus", () => {
+    P.requestPanelPoll(120, true);
+  });
+  await P.pollLoop(true);
 }
 
 })();
