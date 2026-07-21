@@ -75,6 +75,7 @@ class DialogEngine:
         self._clients: dict[str, TelegramAccountClient] = {}
         self._reply_locks: dict[str, asyncio.Lock] = {}
         self._pending_replies: dict[str, asyncio.Task] = {}
+        self._last_replied_user_msg_ids: dict[str, int] = {}
         self._hourly_replies: list[float] = []
         self.dialog_settings = DialogSettings.load(base_dir / "config" / "dialog_settings.json")
 
@@ -327,6 +328,10 @@ class DialogEngine:
             dialog = self._find_dialog(account_id, user_id)
             if not dialog or dialog.status != "active":
                 return
+            if msg_id is not None and any(
+                m.role == "user" and m.msg_id == msg_id for m in dialog.messages
+            ):
+                return
             if not dialog.auto_reply:
                 self.state.add_message(
                     dialog, "user", text, msg_id, self.dialog_settings.max_stored_messages
@@ -357,6 +362,10 @@ class DialogEngine:
                     await self._send_auto_reply(account_id, user_id, llm)
                 except asyncio.CancelledError:
                     pass
+                finally:
+                    current = self._pending_replies.get(pending_key)
+                    if current is asyncio.current_task():
+                        self._pending_replies.pop(pending_key, None)
 
             self._pending_replies[pending_key] = asyncio.create_task(delayed_reply())
 
@@ -394,6 +403,13 @@ class DialogEngine:
                 fresh = self.state.get_dialog(account_id, dialog.target_username)
                 if not fresh:
                     return
+                latest_user_msg_id = self._latest_user_msg_id(fresh)
+                reply_key = f"{account_id}:{user_id}"
+                if (
+                    latest_user_msg_id is not None
+                    and self._last_replied_user_msg_ids.get(reply_key) == latest_user_msg_id
+                ):
+                    return
 
                 combined_context = fresh.extra_context
                 if fresh.dialog_extra_context:
@@ -428,6 +444,8 @@ class DialogEngine:
                     if len(parts) > 1:
                         await asyncio.sleep(random.uniform(1, 3))
 
+                if latest_user_msg_id is not None:
+                    self._last_replied_user_msg_ids[reply_key] = latest_user_msg_id
                 self._hourly_replies.append(asyncio.get_event_loop().time())
                 self.stats.replies_sent += 1
                 self._emit_stats()
@@ -468,6 +486,13 @@ class DialogEngine:
         for dialog in self.state.list_dialogs_for_account(account_id):
             if dialog.target_user_id == user_id:
                 return dialog
+        return None
+
+    @staticmethod
+    def _latest_user_msg_id(dialog: DialogRecord) -> int | None:
+        for message in reversed(dialog.messages):
+            if message.role == "user" and message.msg_id is not None:
+                return message.msg_id
         return None
 
     async def _sync_missed_messages(self, client: TelegramAccountClient, dialog: DialogRecord) -> None:
