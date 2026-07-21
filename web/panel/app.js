@@ -13,6 +13,27 @@ let selectedAgents = new Set();
 let selectedGroupChatAccounts = new Set();
 let groupChatCommonCache = [];
 let logOffset = 0;
+let panelTickInFlight = false;
+let panelTickTimer = null;
+let panelTickCount = 0;
+
+const PANEL_POLL_FAST_MS = 2500;
+const PANEL_POLL_SLOW_EVERY = 3;
+const PANEL_POLL_HIDDEN_EVERY = 6;
+const PANEL_POLL_INTERVALS = {
+  statusVisible: 2000,
+  statusHidden: 8000,
+  heavyVisible: 5000,
+  logsVisible: 2500,
+};
+const panelPollState = {
+  timer: null,
+  inFlight: false,
+  pendingImmediate: false,
+  lastHeavyAt: 0,
+  lastGroupChatAt: 0,
+  lastLogsAt: 0,
+};
 
 function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -58,6 +79,56 @@ function syncPageHeader(name) {
   if (leadEl) leadEl.textContent = lead;
 }
 
+function getActiveTab() {
+  return $(".panel.active")?.id?.replace("panel-", "") || "outreach";
+}
+
+function isPanelVisible() {
+  return !document.hidden;
+}
+
+function shouldRefreshEnginePanel() {
+  if (!isPanelVisible()) return false;
+  const tab = getActiveTab();
+  return tab === "outreach" || tab === "agents";
+}
+
+function shouldRefreshGroupChatPanel() {
+  return isPanelVisible() && getActiveTab() === "groupchat";
+}
+
+function shouldRefreshLogsPanel() {
+  return isPanelVisible() && getActiveTab() === "outreach";
+}
+
+function getStatusPollInterval() {
+  return isPanelVisible() ? PANEL_POLL_INTERVALS.statusVisible : PANEL_POLL_INTERVALS.statusHidden;
+}
+
+function getHeavyPollInterval() {
+  return PANEL_POLL_INTERVALS.heavyVisible;
+}
+
+function getLogsPollInterval() {
+  return PANEL_POLL_INTERVALS.logsVisible;
+}
+
+function schedulePanelPoll(delay = getStatusPollInterval(), force = false) {
+  if (panelPollState.timer) clearTimeout(panelPollState.timer);
+  panelPollState.timer = setTimeout(() => {
+    pollLoop(force).catch(() => {});
+  }, delay);
+}
+
+function requestPanelPoll(delay = 120, force = true) {
+  if (!window.__panelBootStarted) return;
+  if (panelPollState.inFlight) {
+    panelPollState.pendingImmediate = panelPollState.pendingImmediate || force;
+    return;
+  }
+  schedulePanelPoll(delay, force);
+}
+
 function showTab(name) {
   $$("#tabNav [data-tab]").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   $$(".panel").forEach((p) => p.classList.toggle("active", p.id === `panel-${name}`));
@@ -65,6 +136,7 @@ function showTab(name) {
   try {
     localStorage.setItem("panel.activeTab", name);
   } catch (_) {}
+  requestPanelPoll(80, true);
 }
 
 function initNavigation() {
@@ -76,6 +148,18 @@ function initNavigation() {
     initialTab = localStorage.getItem("panel.activeTab") || initialTab;
   } catch (_) {}
   showTab(initialTab);
+}
+
+function getActiveTab() {
+  return $("#tabNav [data-tab].active")?.dataset.tab || "outreach";
+}
+
+function shouldRefreshLogs(tab) {
+  return tab === "outreach" || tab === "dialogs" || tab === "group-chat";
+}
+
+function shouldRefreshGroupChat(tab) {
+  return tab === "group-chat";
 }
 
 let llmProviders = [];
@@ -131,9 +215,6 @@ async function refreshEngine() {
         el.textContent = "Остановлен";
       }
     }
-  } catch (_) {}
-  try {
-    await refreshGroupChatStatus();
   } catch (_) {}
 }
 
@@ -2468,9 +2549,40 @@ $("#btnResume").onclick = () => startEngine(true);
 $("#btnStop").onclick = async () => { await api("/api/engine/stop", { method: "POST" }); refreshStatus(); };
 
 async function tick() {
-  await refreshStatus();
-  await refreshEngine();
-  await refreshLogs();
+  if (panelTickInFlight) return;
+  panelTickInFlight = true;
+  try {
+    const activeTab = getActiveTab();
+    const hiddenFactor = document.hidden ? PANEL_POLL_HIDDEN_EVERY : 1;
+    const shouldRunSlow = panelTickCount % (PANEL_POLL_SLOW_EVERY * hiddenFactor) === 0;
+
+    await refreshStatus();
+
+    if (!document.hidden || shouldRunSlow) {
+      await refreshEngine();
+    }
+
+    if (shouldRefreshGroupChat(activeTab) && (!document.hidden || shouldRunSlow)) {
+      try {
+        await refreshGroupChatStatus();
+      } catch (_) {}
+    }
+
+    if (shouldRefreshLogs(activeTab) && shouldRunSlow) {
+      await refreshLogs();
+    }
+
+    panelTickCount += 1;
+  } finally {
+    panelTickInFlight = false;
+  }
+}
+
+function startPanelPolling() {
+  if (panelTickTimer) return;
+  panelTickTimer = setInterval(() => {
+    tick().catch(() => {});
+  }, PANEL_POLL_FAST_MS);
 }
 
 async function bootstrap() {
@@ -2488,9 +2600,10 @@ async function bootstrap() {
     loadGroupChat(),
     refreshStatus(),
   ]);
-  if (!window.__panelTickHandle) {
-    window.__panelTickHandle = setInterval(() => {
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
       tick().catch(() => {});
-    }, 1500);
-  }
+    }
+  });
+  startPanelPolling();
 }
