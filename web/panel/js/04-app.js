@@ -159,7 +159,7 @@ P.showTab = function(name) {
 }
 
 P.setGroupChatSection = function(name) {
-  const next = ["team", "scene", "limits"].includes(name) ? name : "team";
+  const next = ["team", "roles", "venue", "scene", "autopilot", "style"].includes(name) ? name : "team";
   activeGroupChatSection = next;
   P.$$("[data-gc-nav]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.gcNav === next);

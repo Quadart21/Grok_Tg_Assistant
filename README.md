@@ -1,6 +1,6 @@
 # Grok TG Assistant
 
-[![Version](https://img.shields.io/badge/version-1.2.1-22d3ee?style=for-the-badge)](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.2.1)
+[![Version](https://img.shields.io/badge/version-1.2.2-22d3ee?style=for-the-badge)](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.2.2)
 [![Python](https://img.shields.io/badge/python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-a78bfa?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-34d399?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Quadart21/Grok_Tg_Assistant)
@@ -84,6 +84,7 @@ Grok_Tg_Assistant/
 
 | Версия | Дата | Описание |
 |--------|------|----------|
+| [**v1.2.2**](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.2.2) | 21.07.2026 | Интерфейс группового чата разбит на отдельные подразделы: состав, роли, площадка, сцена, автопилот и стиль |
 | [**v1.2.1**](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.2.1) | 21.07.2026 | Антидубль для группового чата: отсев повторяющихся и слишком похожих реплик |
 | [**v1.2.0**](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.2.0) | 20.07.2026 | Вступление аккаунтов в Telegram-чат по публичной или invite-ссылке из вкладки группового чата |
 | [**v1.1.0**](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.1.0) | 19.07.2026 | Групповой чат аккаунтов + Local LLM (llama.cpp) |

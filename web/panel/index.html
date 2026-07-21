@@ -612,8 +612,15 @@
               </div>
               <div class="group-chat-subnav" id="groupChatSubnav">
                 <button type="button" class="btn ghost active" data-gc-nav="team">Состав</button>
+                <button type="button" class="btn ghost" data-gc-nav="roles">Роли</button>
+                <button type="button" class="btn ghost" data-gc-nav="venue">Площадка</button>
                 <button type="button" class="btn ghost" data-gc-nav="scene">Сцена</button>
-                <button type="button" class="btn ghost" data-gc-nav="limits">Лимиты</button>
+                <button type="button" class="btn ghost" data-gc-nav="autopilot">Автопилот</button>
+                <button type="button" class="btn ghost" data-gc-nav="style">Стиль</button>
+              </div>
+              <div class="group-chat-toolbar">
+                <p class="hint">Экран разбит на отдельные шаги: сначала собираете состав, потом задаёте площадку и сцену, после этого настраиваете автопилот и стиль ответов.</p>
+                <button class="btn primary" id="btnSaveGroupChatSettings">Сохранить автопилот и стиль</button>
               </div>
             </div>
 
@@ -633,24 +640,26 @@
                 <p class="hint" id="groupChatSelectionHint">Нужно минимум 2 аккаунта. Для естественного разговора рекомендуем 3-6 участников.</p>
                 <div class="group-chat-accounts-grid" id="groupChatAccountsGrid"></div>
               </div>
+            </div>
 
+            <div class="group-chat-section" data-gc-section="roles">
               <div class="card">
                 <div class="section-block-heading">
                   <div>
                     <h3>Командные роли</h3>
-                    <p class="hint">У каждого участника можно быстро уточнить роль и индивидуальный промпт.</p>
+                    <p class="hint">У каждого участника можно отдельно задать роль, манеру общения и индивидуальный промпт под сцену.</p>
                   </div>
                 </div>
                 <div id="groupChatRolesBox"></div>
               </div>
             </div>
 
-            <div class="group-chat-section" data-gc-section="scene">
+            <div class="group-chat-section" data-gc-section="venue">
               <div class="card">
                 <div class="section-block-heading">
                   <div>
-                    <h3>Площадка и сценарий</h3>
-                    <p class="hint">Найдите общий чат, задайте тему и контекст, чтобы вся группа держала одну линию.</p>
+                    <h3>Площадка разговора</h3>
+                    <p class="hint">Сначала выберите общий чат или заведите аккаунты по ссылке, чтобы у сцены была конкретная площадка.</p>
                   </div>
                   <button class="btn ghost" id="btnFindCommonChats">Найти общие чаты</button>
                 </div>
@@ -668,6 +677,17 @@
                   <button class="btn ghost" id="btnGroupChatJoinLink">Вступить аккаунтами</button>
                 </div>
                 <p class="hint">Берём выбранные аккаунты и заводим их в чат. Поддерживаются публичные и invite-ссылки Telegram.</p>
+              </div>
+            </div>
+
+            <div class="group-chat-section" data-gc-section="scene">
+              <div class="card">
+                <div class="section-block-heading">
+                  <div>
+                    <h3>Сцена и контекст</h3>
+                    <p class="hint">Здесь задаётся общая линия разговора: тема, фон беседы и быстрый темп общения.</p>
+                  </div>
+                </div>
                 <label class="label">Тема разговора</label>
                 <input type="text" id="groupChatTopic" placeholder="Например: обсуждаем запуск продукта">
                 <label class="label">Контекст сцены</label>
@@ -689,12 +709,11 @@
               </div>
             </div>
 
-            <div class="group-chat-section" data-gc-section="limits">
-              <div class="page-grid">
+            <div class="group-chat-section" data-gc-section="autopilot">
+              <div class="group-chat-section-grid">
                 <div class="card">
                   <div class="card-header">
-                    <h3>Расписание и квоты</h3>
-                    <button class="btn btn-sm primary" id="btnSaveGroupChatSettings">Сохранить настройки</button>
+                    <h3>Расписание активности</h3>
                   </div>
                   <div class="grid2">
                     <label class="inline-check"><input type="checkbox" id="gc_use_schedule" checked> Работать по расписанию</label>
@@ -721,7 +740,11 @@
                   </div>
                   <label class="label">Окна активности (JSON: days 0=Пн…6=Вс, start/end HH:MM)</label>
                   <textarea id="gc_activity_windows" rows="5"></textarea>
-                  <div class="grid2" style="margin-top:1rem">
+                </div>
+
+                <div class="card">
+                  <div class="card-header"><h3>Квоты и ритм группы</h3></div>
+                  <div class="grid2">
                     <div>
                       <label class="label">Лимит / аккаунт / сессия</label>
                       <input type="number" id="gc_max_messages_per_account_session" value="40">
@@ -751,9 +774,13 @@
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
 
+            <div class="group-chat-section" data-gc-section="style">
+              <div class="group-chat-section-grid">
                 <div class="card">
-                  <div class="card-header"><h3>Тайминги и стиль</h3></div>
+                  <div class="card-header"><h3>Тайминги ответа</h3></div>
                   <div class="grid2">
                     <div>
                       <label class="label">Пауза между спикерами (сек)</label>
@@ -784,6 +811,12 @@
                       <label class="label">Шанс короткой реплики</label>
                       <input type="number" id="gc_short_reply_chance" min="0" max="1" step="0.05" value="0.35">
                     </div>
+                  </div>
+                </div>
+
+                <div class="card">
+                  <div class="card-header"><h3>Стиль реплик и реакции</h3></div>
+                  <div class="grid2">
                     <label class="inline-check"><input type="checkbox" id="gc_reply_to_humans_enabled" checked> Отвечать живым участникам</label>
                     <label class="inline-check"><input type="checkbox" id="gc_reply_to_humans_only_on_quote" checked> Только если процитировали нашего участника</label>
                     <div>
@@ -835,7 +868,10 @@
                       <input type="text" id="gc_stop_keywords" value="стоп боты, stop bots">
                     </div>
                   </div>
-                  <p id="groupChatSettingsMsg" class="msg"></p>
+                  <div class="group-chat-action-bar">
+                    <p class="hint">Сохранение применяется к настройкам автопилота и стиля. Состав, роли и сцена сохраняются отдельной кнопкой внутри сценария.</p>
+                    <p id="groupChatSettingsMsg" class="msg"></p>
+                  </div>
                 </div>
               </div>
             </div>
