@@ -79,7 +79,7 @@ class GroupChatSettings:
     split_parts_max: int = 3
     dedupe_recent_messages_window: int = 16
     dedupe_similarity_threshold: float = 0.9
-    dedupe_retry_attempts: int = 2
+    dedupe_retry_attempts: int = 3
 
     # Контент / LLM
     language: str = "ru"
@@ -198,7 +198,7 @@ class GroupChatSettings:
             split_parts_max=int(data.get("split_parts_max", 3)),
             dedupe_recent_messages_window=int(data.get("dedupe_recent_messages_window", 16)),
             dedupe_similarity_threshold=float(data.get("dedupe_similarity_threshold", 0.9)),
-            dedupe_retry_attempts=int(data.get("dedupe_retry_attempts", 2)),
+            dedupe_retry_attempts=int(data.get("dedupe_retry_attempts", 3)),
             language=str(data.get("language", "ru")),
             history_limit=int(data.get("history_limit", 40)),
             temperature=float(data.get("temperature", 0.9)),

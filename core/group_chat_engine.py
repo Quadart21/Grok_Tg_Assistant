@@ -175,12 +175,38 @@ class GroupChatEngine:
         normalized = re.sub(r"[^\w\s]+", "", normalized, flags=re.UNICODE)
         return normalized.strip()
 
+    @classmethod
+    def _message_tokens(cls, text: str) -> list[str]:
+        normalized = cls._normalize_message(text)
+        if not normalized:
+            return []
+        return [token for token in normalized.split() if token]
+
+    @classmethod
+    def _content_tokens(cls, text: str) -> set[str]:
+        return {
+            token
+            for token in cls._message_tokens(text)
+            if len(token) >= 4 or any(ch.isdigit() for ch in token)
+        }
+
+    @staticmethod
+    def _phrase_ngrams(tokens: list[str], size: int) -> set[str]:
+        if size <= 0 or len(tokens) < size:
+            return set()
+        return {" ".join(tokens[idx : idx + size]) for idx in range(len(tokens) - size + 1)}
+
     def _find_recent_duplicate(
         self, session: GroupSessionRecord, text: str
     ) -> dict[str, Any] | None:
         candidate = self._normalize_message(text)
         if not candidate:
             return None
+
+        candidate_tokens = self._message_tokens(text)
+        candidate_content = self._content_tokens(text)
+        candidate_bigrams = self._phrase_ngrams(candidate_tokens, 2)
+        candidate_trigrams = self._phrase_ngrams(candidate_tokens, 3)
 
         window = max(1, int(self.settings.dedupe_recent_messages_window or 1))
         threshold = min(
@@ -193,8 +219,21 @@ class GroupChatEngine:
                 continue
             if candidate == existing:
                 return {"message": message, "reason": "exact", "similarity": 1.0}
+
+            existing_tokens = self._message_tokens(message.text)
+            if candidate_trigrams and existing_tokens:
+                shared_trigrams = candidate_trigrams & self._phrase_ngrams(existing_tokens, 3)
+                if shared_trigrams:
+                    return {
+                        "message": message,
+                        "reason": "phrase",
+                        "similarity": 1.0,
+                        "shared_phrase": sorted(shared_trigrams)[0],
+                    }
+
             if len(candidate) < 12 or len(existing) < 12:
                 continue
+
             similarity = SequenceMatcher(None, candidate, existing).ratio()
             if similarity >= threshold:
                 return {
@@ -202,6 +241,30 @@ class GroupChatEngine:
                     "reason": "similar",
                     "similarity": similarity,
                 }
+
+            existing_content = self._content_tokens(message.text)
+            shared_content = candidate_content & existing_content
+            if shared_content:
+                overlap = len(shared_content) / max(1, min(len(candidate_content), len(existing_content)))
+                if len(shared_content) >= 4 and overlap >= 0.8:
+                    return {
+                        "message": message,
+                        "reason": "content",
+                        "similarity": overlap,
+                        "shared_tokens": sorted(shared_content),
+                    }
+
+            if candidate_bigrams and existing_tokens:
+                existing_bigrams = self._phrase_ngrams(existing_tokens, 2)
+                shared_bigrams = candidate_bigrams & existing_bigrams
+                if len(shared_bigrams) >= 2:
+                    return {
+                        "message": message,
+                        "reason": "phrase_overlap",
+                        "similarity": len(shared_bigrams)
+                        / max(1, min(len(candidate_bigrams), len(existing_bigrams))),
+                        "shared_phrase": sorted(shared_bigrams)[0],
+                    }
         return None
 
     def _anti_repeat_context(
@@ -225,6 +288,35 @@ class GroupChatEngine:
         parts.append(f"Антидубль: не повторяй недавнюю реплику {speaker_name}: {quoted}")
         parts.append(
             "Сформулируй следующую мысль по-другому: новый угол, другие слова, без близкого перефраза."
+        )
+        return "\n".join(parts)
+
+    def _build_retry_context(
+        self,
+        session: GroupSessionRecord,
+        duplicate: dict[str, Any] | None,
+        base_context: str = "",
+    ) -> str:
+        parts: list[str] = []
+        if base_context.strip():
+            parts.append(base_context.strip())
+        if not duplicate:
+            return "\n".join(parts)
+
+        message = duplicate["message"]
+        quoted = (message.text or "").strip().replace("\n", " ")
+        quoted = quoted[:220]
+        speaker_name = message.speaker_name or message.speaker_account_id or "участник"
+        if session.topic.strip():
+            parts.append(f"Держись темы разговора: {session.topic.strip()}")
+        parts.append(f"Антидубль: не повторяй недавнюю реплику {speaker_name}: {quoted}")
+        if duplicate.get("shared_phrase"):
+            parts.append(f"Не повторяй оборот или аналогию: {duplicate['shared_phrase']}")
+        parts.append(
+            "Не повторяй тот же тезис, сравнение, шутку или вывод даже другими словами."
+        )
+        parts.append(
+            "Сделай следующую реплику с новым углом: другой аргумент, вопрос, уточнение, пример или смена фокуса."
         )
         return "\n".join(parts)
 
@@ -272,7 +364,7 @@ class GroupChatEngine:
                     f"■ {self._display_names.get(speaker, speaker)}: реплика отброшена антидублем"
                 )
                 return ""
-            retry_context = self._anti_repeat_context(session, duplicate, extra_context)
+            retry_context = self._build_retry_context(session, duplicate, extra_context)
 
         return ""
 
