@@ -212,6 +212,11 @@ class GroupChatSettingsBody(BaseModel):
     read_and_wait_min_sec: int = 20
     read_and_wait_max_sec: int = 90
     short_reply_chance: float = 0.35
+    reply_to_humans_enabled: bool = True
+    reply_to_humans_only_on_quote: bool = True
+    reply_to_humans_chance: float = 0.85
+    reply_to_humans_cooldown_min_sec: int = 45
+    reply_to_humans_cooldown_max_sec: int = 150
     split_long_messages: bool = True
     split_at_chars: int = 280
     split_parts_max: int = 3

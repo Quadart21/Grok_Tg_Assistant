@@ -308,11 +308,13 @@ class TelegramAccountClient:
             )
         return result
 
-    async def send_message_to_chat(self, chat_id: int, text: str) -> int:
+    async def send_message_to_chat(
+        self, chat_id: int, text: str, reply_to_msg_id: int | None = None
+    ) -> int:
         if not self._client:
             raise RuntimeError("Клиент не подключён")
         entity = await self._client.get_entity(chat_id)
-        msg = await self._client.send_message(entity, text)
+        msg = await self._client.send_message(entity, text, reply_to=reply_to_msg_id)
         return msg.id
 
     async def show_typing_in_chat(self, chat_id: int, seconds: float = 2.0) -> None:
@@ -342,6 +344,25 @@ class TelegramAccountClient:
                     or getattr(sender, "first_name", None)
                     or f"id_{sender_id}"
                 )
+            reply_to_msg_id = getattr(msg, "reply_to_msg_id", None)
+            reply_to_sender_id = 0
+            reply_to_sender_name = ""
+            reply_to_text = ""
+            if reply_to_msg_id:
+                try:
+                    reply_msg = await msg.get_reply_message()
+                except Exception:
+                    reply_msg = None
+                if reply_msg:
+                    reply_to_text = (reply_msg.message or "").strip()
+                    reply_sender = await reply_msg.get_sender()
+                    reply_to_sender_id = int(getattr(reply_sender, "id", None) or 0)
+                    if reply_sender:
+                        reply_to_sender_name = (
+                            getattr(reply_sender, "username", None)
+                            or getattr(reply_sender, "first_name", None)
+                            or f"id_{reply_to_sender_id}"
+                        )
             result.append(
                 {
                     "msg_id": msg.id,
@@ -350,6 +371,10 @@ class TelegramAccountClient:
                     "text": text,
                     "out": bool(msg.out),
                     "date": msg.date.isoformat() if msg.date else "",
+                    "reply_to_msg_id": int(reply_to_msg_id or 0) or None,
+                    "reply_to_sender_id": int(reply_to_sender_id or 0),
+                    "reply_to_sender_name": str(reply_to_sender_name),
+                    "reply_to_text": str(reply_to_text),
                 }
             )
         return result

@@ -1762,7 +1762,9 @@ const GROUP_CHAT_SETTING_FIELDS = [
   "delay_between_speakers_min_sec", "delay_between_speakers_max_sec",
   "delay_within_burst_min_sec", "delay_within_burst_max_sec",
   "read_and_wait_chance", "read_and_wait_min_sec", "read_and_wait_max_sec",
-  "short_reply_chance", "reply_style", "language", "temperature", "max_tokens",
+  "short_reply_chance", "reply_to_humans_enabled", "reply_to_humans_only_on_quote",
+  "reply_to_humans_chance", "reply_to_humans_cooldown_min_sec", "reply_to_humans_cooldown_max_sec",
+  "reply_style", "language", "temperature", "max_tokens",
   "history_limit", "split_long_messages", "split_at_chars", "split_parts_max",
 ];
 
@@ -1849,6 +1851,64 @@ function applyGroupChatPreset(name) {
     if (el) el.value = value;
   });
   setGroupChatPresetUi(name);
+}
+
+function clearGroupChatTopic() {
+  const topic = $("#groupChatTopic");
+  if (topic) {
+    topic.value = "";
+    delete topic.dataset.touched;
+  }
+}
+
+function clearGroupChatScene() {
+  clearGroupChatTopic();
+  const extra = $("#groupChatExtra");
+  if (extra) {
+    extra.value = "";
+    delete extra.dataset.touched;
+  }
+  const select = $("#groupChatSelect");
+  if (select) {
+    if (!Array.from(select.options).some((option) => option.value === "")) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "— сначала найдите общие чаты —";
+      select.prepend(option);
+    }
+    select.value = "";
+  }
+  groupChatRoleDrafts = new Map();
+  renderGroupChatRoleOverrides();
+  renderGroupChatVenuePreview();
+  $("#groupChatMsg").textContent = "Сцена очищена: тема, контекст и площадка сброшены.";
+}
+
+function buildGroupChatStatusCopy(st) {
+  const running = !!st.running;
+  const paused = !!st.paused_schedule;
+  if (running && paused) {
+    return {
+      summary: "Пауза",
+      detail: "Ждём окно активности",
+      live: `Сцена на паузе по расписанию · за сессию: ${st.messages_sent || 0} · за день: ${st.group_day_count || 0}`,
+      note: st.status_text || "Сцена собрана, но сейчас вне разрешённого окна активности.",
+    };
+  }
+  if (running) {
+    return {
+      summary: "В эфире",
+      detail: "Разговор идёт",
+      live: `Сцена активна · отправлено: ${st.messages_sent || 0} · за день: ${st.group_day_count || 0}`,
+      note: st.status_text || "Сцена работает в штатном режиме.",
+    };
+  }
+  return {
+    summary: "Остановлен",
+    detail: "Сцена не запущена",
+    live: st.status_text || "Сцена ждёт запуска",
+    note: st.status_text || "Соберите состав, площадку и тему для запуска.",
+  };
 }
 
 function updateGroupChatSelectionSummary() {
@@ -2026,6 +2086,14 @@ function renderGroupChatLog(st) {
         <span>${escapeHtml(safeText(m.ts || m.created_at, ""))}</span>
       </div>
       <div class="group-chat-log-body">${escapeHtml(safeText(m.text, ""))}</div>
+      ${(() => {
+        const meta = [];
+        if (m.external) meta.push("живой участник");
+        if (m.reply_to_msg_id) meta.push(`ответ на #${Number(m.reply_to_msg_id)}`);
+        if (m.reply_to_external) meta.push("ответ на живого");
+        if (m.reply_to_speaker_account_id) meta.push(`цитата: ${escapeHtml(String(m.reply_to_speaker_account_id))}`);
+        return meta.length ? `<div class="hint">${meta.join(" · ")}</div>` : "";
+      })()}
     </article>
   `).join("");
 }
@@ -2034,23 +2102,26 @@ function applyGroupChatStatus(st) {
   const chip = $("#groupChatStats");
   const running = !!st.running;
   const paused = !!st.paused_schedule;
-  const statusText = st.status_text || (running ? "Диалог в работе" : "Ожидание запуска");
+  const statusCopy = buildGroupChatStatusCopy(st);
+  const hasTopic = !!safeText(st.topic, "").trim();
+  const statusText = statusCopy.note;
+  const pendingHumanReplies = Number(st.pending_external_replies || 0);
   if (chip) {
     chip.className = `chip ${running ? (paused ? "warn" : "ok") : "muted"}`;
     chip.textContent = running ? (paused ? "Пауза по расписанию" : "Онлайн") : "Остановлен";
   }
-  $("#groupChatSummaryStatus").textContent = running ? (paused ? "Пауза" : "В эфире") : "Остановлен";
-  $("#groupChatSummaryStatusNote").textContent = statusText;
+  $("#groupChatSummaryStatus").textContent = statusCopy.summary;
+  $("#groupChatSummaryStatusNote").textContent = statusCopy.note;
   $("#groupChatSummaryVolume").textContent = `${st.messages_sent || 0} сообщений`;
-  $("#groupChatSummaryVolumeNote").textContent = `За день: ${st.group_day_count || 0} · Активных: ${(st.running_accounts || []).length}`;
-  $("#groupChatLiveStats").textContent = running
-    ? `${statusText} · отправлено: ${st.messages_sent || 0} · за день: ${st.group_day_count || 0}`
-    : statusText;
-  $("#groupChatDetailStatus").textContent = running ? (paused ? "Пауза по расписанию" : "Разговор идёт") : "Сцена не запущена";
-  $("#groupChatDetailChat").textContent = safeText(st.chat_title || st.chat_id, "Не выбран");
-  $("#groupChatDetailTopic").textContent = safeText(st.topic, "Тема не задана");
-  $("#groupChatDetailSpeaker").textContent = safeText(st.last_speaker, "Пока никто");
-  $("#groupChatDetailActivity").textContent = `${st.messages_sent || 0} сообщений за сессию · ${st.group_day_count || 0} за день`;
+  $("#groupChatSummaryVolumeNote").textContent = `За день: ${st.group_day_count || 0} · Активных: ${(st.running_accounts || []).length} · Очередь: ${pendingHumanReplies}`;
+  $("#groupChatLiveStats").textContent = `${statusCopy.live} · очередь ответов: ${pendingHumanReplies}`;
+  $("#groupChatDetailStatus").textContent = statusCopy.detail;
+  $("#groupChatDetailChat").textContent = safeText(st.chat_title || st.chat_id, "Площадка не выбрана");
+  $("#groupChatDetailTopic").textContent = hasTopic ? st.topic : "Тема не задана";
+  $("#groupChatDetailSpeaker").textContent = safeText(st.last_speaker, "Ещё никто не писал");
+  $("#groupChatDetailActivity").textContent = `За сессию: ${st.messages_sent || 0} · За день: ${st.group_day_count || 0}`;
+  $("#groupChatDetailHumanQueue").textContent = `${pendingHumanReplies}`;
+  $("#groupChatDetailHumanTrigger").textContent = safeText(st.last_external_trigger, "Пока нет");
   $("#groupChatMsg").textContent = statusText;
   renderGroupChatParticipants(st);
   renderGroupChatLeaderboard(st);
@@ -2303,6 +2374,13 @@ $("#btnGroupChatSelectAll").onclick = () => {
 $("#btnGroupChatClearSelection").onclick = () => {
   selectedGroupChatAccounts.clear();
   renderGroupChatAccounts();
+};
+$("#btnGroupChatResetTopic").onclick = () => {
+  clearGroupChatTopic();
+  $("#groupChatMsg").textContent = "Тема сцены сброшена.";
+};
+$("#btnGroupChatClearScene").onclick = () => {
+  clearGroupChatScene();
 };
 $$(".gc-preset").forEach((btn) => {
   btn.onclick = () => applyGroupChatPreset(btn.dataset.preset);

@@ -185,6 +185,9 @@ class GroupChatMessage:
     ts: str
     msg_id: int | None = None
     external: bool = False
+    reply_to_msg_id: int | None = None
+    reply_to_speaker_account_id: str = ""
+    reply_to_external: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -194,6 +197,9 @@ class GroupChatMessage:
             "ts": self.ts,
             "msg_id": self.msg_id,
             "external": self.external,
+            "reply_to_msg_id": self.reply_to_msg_id,
+            "reply_to_speaker_account_id": self.reply_to_speaker_account_id,
+            "reply_to_external": self.reply_to_external,
         }
 
     @classmethod
@@ -205,6 +211,9 @@ class GroupChatMessage:
             ts=str(data.get("ts", "")),
             msg_id=data.get("msg_id"),
             external=bool(data.get("external", False)),
+            reply_to_msg_id=data.get("reply_to_msg_id"),
+            reply_to_speaker_account_id=str(data.get("reply_to_speaker_account_id", "")),
+            reply_to_external=bool(data.get("reply_to_external", False)),
         )
 
 
@@ -321,6 +330,9 @@ class StateStore:
         text: str,
         msg_id: int | None = None,
         external: bool = False,
+        reply_to_msg_id: int | None = None,
+        reply_to_speaker_account_id: str = "",
+        reply_to_external: bool = False,
         max_stored: int = 200,
     ) -> None:
         with self._lock:
@@ -334,6 +346,9 @@ class StateStore:
                     ts=_now_iso(),
                     msg_id=msg_id,
                     external=external,
+                    reply_to_msg_id=reply_to_msg_id,
+                    reply_to_speaker_account_id=reply_to_speaker_account_id,
+                    reply_to_external=reply_to_external,
                 )
             )
             if len(session.messages) > max_stored:

@@ -69,6 +69,11 @@ class GroupChatSettings:
     read_and_wait_min_sec: int = 20
     read_and_wait_max_sec: int = 90
     short_reply_chance: float = 0.35
+    reply_to_humans_enabled: bool = True
+    reply_to_humans_only_on_quote: bool = True
+    reply_to_humans_chance: float = 0.85
+    reply_to_humans_cooldown_min_sec: int = 45
+    reply_to_humans_cooldown_max_sec: int = 150
     split_long_messages: bool = True
     split_at_chars: int = 280
     split_parts_max: int = 3
@@ -122,6 +127,11 @@ class GroupChatSettings:
             "read_and_wait_min_sec": self.read_and_wait_min_sec,
             "read_and_wait_max_sec": self.read_and_wait_max_sec,
             "short_reply_chance": self.short_reply_chance,
+            "reply_to_humans_enabled": self.reply_to_humans_enabled,
+            "reply_to_humans_only_on_quote": self.reply_to_humans_only_on_quote,
+            "reply_to_humans_chance": self.reply_to_humans_chance,
+            "reply_to_humans_cooldown_min_sec": self.reply_to_humans_cooldown_min_sec,
+            "reply_to_humans_cooldown_max_sec": self.reply_to_humans_cooldown_max_sec,
             "split_long_messages": self.split_long_messages,
             "split_at_chars": self.split_at_chars,
             "split_parts_max": self.split_parts_max,
@@ -172,6 +182,11 @@ class GroupChatSettings:
             read_and_wait_min_sec=int(data.get("read_and_wait_min_sec", 20)),
             read_and_wait_max_sec=int(data.get("read_and_wait_max_sec", 90)),
             short_reply_chance=float(data.get("short_reply_chance", 0.35)),
+            reply_to_humans_enabled=bool(data.get("reply_to_humans_enabled", True)),
+            reply_to_humans_only_on_quote=bool(data.get("reply_to_humans_only_on_quote", True)),
+            reply_to_humans_chance=float(data.get("reply_to_humans_chance", 0.85)),
+            reply_to_humans_cooldown_min_sec=int(data.get("reply_to_humans_cooldown_min_sec", 45)),
+            reply_to_humans_cooldown_max_sec=int(data.get("reply_to_humans_cooldown_max_sec", 150)),
             split_long_messages=bool(data.get("split_long_messages", True)),
             split_at_chars=int(data.get("split_at_chars", 280)),
             split_parts_max=int(data.get("split_parts_max", 3)),

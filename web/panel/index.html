@@ -646,6 +646,10 @@
                 <input type="text" id="groupChatTopic" placeholder="Например: обсуждаем запуск продукта">
                 <label class="label">Контекст сцены</label>
                 <textarea id="groupChatExtra" rows="4" placeholder="Что уже известно, какой фон у беседы, какие детали важно упоминать..."></textarea>
+                <div class="btn-row">
+                  <button type="button" class="btn ghost" id="btnGroupChatResetTopic">Сбросить тему</button>
+                  <button type="button" class="btn ghost" id="btnGroupChatClearScene">Очистить сцену</button>
+                </div>
                 <div class="group-chat-presets">
                   <span class="hint">Быстрый темп:</span>
                   <button type="button" class="btn ghost gc-preset" data-preset="natural">Естественно</button>
@@ -759,6 +763,19 @@
                     <label class="label">Шанс короткой реплики</label>
                     <input type="number" id="gc_short_reply_chance" min="0" max="1" step="0.05" value="0.35">
                   </div>
+                  <label class="inline-check"><input type="checkbox" id="gc_reply_to_humans_enabled" checked> Отвечать живым участникам</label>
+                  <label class="inline-check"><input type="checkbox" id="gc_reply_to_humans_only_on_quote" checked> Только если процитировали нашего участника</label>
+                  <div>
+                    <label class="label">Шанс ответа живому участнику</label>
+                    <input type="number" id="gc_reply_to_humans_chance" min="0" max="1" step="0.05" value="0.85">
+                  </div>
+                  <div>
+                    <label class="label">Пауза между ответами живым (сек)</label>
+                    <div class="btn-row">
+                      <input type="number" id="gc_reply_to_humans_cooldown_min_sec" value="45" style="width:6rem">
+                      <input type="number" id="gc_reply_to_humans_cooldown_max_sec" value="150" style="width:6rem">
+                    </div>
+                  </div>
                   <div>
                     <label class="label">Стиль реплик</label>
                     <select id="gc_reply_style">
@@ -819,9 +836,11 @@
               <dl class="detail-list">
                 <div><dt>Статус</dt><dd id="groupChatDetailStatus">Остановлен</dd></div>
                 <div><dt>Площадка</dt><dd id="groupChatDetailChat">—</dd></div>
-                <div><dt>Тема</dt><dd id="groupChatDetailTopic">—</dd></div>
+                <div><dt>Тема сцены</dt><dd id="groupChatDetailTopic">—</dd></div>
                 <div><dt>Последний спикер</dt><dd id="groupChatDetailSpeaker">—</dd></div>
                 <div><dt>Последняя активность</dt><dd id="groupChatDetailActivity">—</dd></div>
+                <div><dt>Очередь ответов</dt><dd id="groupChatDetailHumanQueue">0</dd></div>
+                <div><dt>Последний триггер</dt><dd id="groupChatDetailHumanTrigger">Пока нет</dd></div>
               </dl>
               <p id="groupChatMsg" class="msg"></p>
             </div>

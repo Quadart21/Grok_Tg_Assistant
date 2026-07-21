@@ -5,7 +5,7 @@ import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from telethon.errors import FloodWaitError
 
@@ -35,6 +35,8 @@ class GroupChatStats:
     day_counts: dict[str, int] = field(default_factory=dict)
     group_day_count: int = 0
     recent_messages: list[dict] = field(default_factory=list)
+    pending_external_replies: int = 0
+    last_external_trigger: str = ""
 
 
 LogCallback = Callable[[str], None]
@@ -73,6 +75,9 @@ class GroupChatEngine:
         self._known_msg_ids: set[int] = set()
         self._last_speakers: list[str] = []
         self._in_quiet_until: float = 0.0
+        self._pending_external_replies: list[dict[str, Any]] = []
+        self._handled_external_msg_ids: set[int] = set()
+        self._next_external_reply_after: float = 0.0
 
     def stop(self) -> None:
         self._stop.set()
@@ -85,6 +90,167 @@ class GroupChatEngine:
 
     def _settings_path(self) -> Path:
         return self.base_dir / "config" / "group_chat.json"
+
+    def _refresh_pending_stats(self) -> None:
+        self.stats.pending_external_replies = len(self._pending_external_replies)
+
+    @staticmethod
+    def _find_message_by_id(session: GroupSessionRecord, msg_id: int | None) -> dict[str, Any] | None:
+        if not msg_id:
+            return None
+        for message in reversed(session.messages):
+            if int(message.msg_id) == int(msg_id):
+                return message.to_dict()
+        return None
+
+    def _pick_reply_speaker(
+        self, session: GroupSessionRecord, preferred_account_id: str = ""
+    ) -> str | None:
+        if (
+            preferred_account_id
+            and preferred_account_id in session.account_ids
+            and preferred_account_id in self._clients
+            and self._quota_ok(session, preferred_account_id)
+        ):
+            return preferred_account_id
+        return self._pick_speaker(session)
+
+    def _build_transcript(self, session: GroupSessionRecord) -> list[dict[str, str]]:
+        return [
+            {
+                "speaker_name": message.speaker_name,
+                "text": message.text,
+                "speaker": message.speaker_account_id,
+            }
+            for message in session.messages[-self.settings.history_limit :]
+        ]
+
+    def _participants_labels(self, session: GroupSessionRecord) -> list[str]:
+        return [
+            f"{self._display_names.get(account_id, account_id)} ({session.role_names.get(account_id, '')})"
+            for account_id in session.account_ids
+        ]
+
+    def _speaker_label(self, session: GroupSessionRecord, speaker: str) -> str:
+        return (
+            f"{self._display_names.get(speaker, speaker)} "
+            f"[{session.role_names.get(speaker, 'роль')}]"
+        )
+
+    def _queue_external_reply(
+        self,
+        *,
+        msg_id: int,
+        speaker_account_id: str,
+        speaker_name: str,
+        text: str,
+        quoted_text: str = "",
+        quoted_speaker_account_id: str = "",
+        quoted_external: bool = False,
+    ) -> None:
+        if msg_id in self._handled_external_msg_ids:
+            return
+        if any(int(item.get("msg_id") or 0) == msg_id for item in self._pending_external_replies):
+            return
+        self._pending_external_replies.append(
+            {
+                "msg_id": int(msg_id),
+                "speaker_account_id": speaker_account_id,
+                "speaker_name": speaker_name,
+                "text": text,
+                "quoted_text": quoted_text,
+                "quoted_speaker_account_id": quoted_speaker_account_id,
+                "quoted_external": quoted_external,
+            }
+        )
+        preview = (text or "").strip().replace("\n", " ")
+        self.stats.last_external_trigger = f"{speaker_name}: {preview[:120]}" if preview else speaker_name
+        self._refresh_pending_stats()
+        self._emit()
+
+    async def _send_generated_parts(
+        self,
+        session: GroupSessionRecord,
+        speaker: str,
+        client: TelegramAccountClient,
+        parts: list[str],
+        *,
+        reply_to_msg_id: int | None = None,
+        reply_to_speaker_account_id: str = "",
+        reply_to_external: bool = False,
+    ) -> tuple[GroupSessionRecord, bool]:
+        sent_any = False
+        for idx, part in enumerate(parts):
+            if self._stop.is_set():
+                break
+            if not self._quota_ok(session, speaker):
+                break
+            typing_sec = self._typing_seconds(part)
+            current_reply_to = reply_to_msg_id if idx == 0 else None
+            current_reply_account = reply_to_speaker_account_id if idx == 0 else ""
+            current_reply_external = bool(reply_to_external and idx == 0)
+            try:
+                await client.show_typing_in_chat(session.chat_id, typing_sec)
+                msg_id = await client.send_message_to_chat(
+                    session.chat_id,
+                    part,
+                    reply_to_msg_id=current_reply_to,
+                )
+            except FloodWaitError as exc:
+                wait = int(getattr(exc, "seconds", 30) or 30)
+                self.log(f"⏳ FloodWait {wait}с ({speaker})")
+                if await self._sleep_interruptible(wait + 2):
+                    break
+                continue
+            except Exception as exc:
+                self.log(f"❌ Отправка {speaker}: {format_telegram_error(exc)}")
+                break
+
+            sent_any = True
+            self._known_msg_ids.add(msg_id)
+            self.state.add_group_message(
+                session,
+                speaker_account_id=speaker,
+                speaker_name=self._display_names.get(speaker, speaker),
+                text=part,
+                msg_id=msg_id,
+                external=False,
+                reply_to_msg_id=current_reply_to,
+                reply_to_speaker_account_id=current_reply_account,
+                reply_to_external=current_reply_external,
+            )
+            session = self.state.group_session or session
+            session.session_counts[speaker] = session.session_counts.get(speaker, 0) + 1
+            session.day_counts[speaker] = session.day_counts.get(speaker, 0) + 1
+            session.group_day_count += 1
+            self.state.upsert_group_session(session)
+
+            now_t = asyncio.get_event_loop().time()
+            self._hourly.setdefault(speaker, []).append(now_t)
+            self._last_speakers.append(speaker)
+            if len(self._last_speakers) > 20:
+                self._last_speakers = self._last_speakers[-20:]
+
+            self.stats.messages_sent += 1
+            self.stats.last_speaker = speaker
+            self.stats.last_message = part[:120]
+            self.stats.session_counts = dict(session.session_counts)
+            self.stats.day_counts = dict(session.day_counts)
+            self.stats.group_day_count = session.group_day_count
+            self.stats.recent_messages = [message.to_dict() for message in session.messages[-12:]]
+            self._refresh_pending_stats()
+            self.stats.status_text = f"{speaker}: отправил"
+            self._emit()
+            self.log(f"→ {speaker}: {part[:80]}")
+
+            if idx < len(parts) - 1:
+                pause = random.uniform(
+                    self.settings.delay_within_burst_min_sec,
+                    self.settings.delay_within_burst_max_sec,
+                )
+                if await self._sleep_interruptible(pause):
+                    break
+        return session, sent_any
 
     def _resolve_proxy(
         self, account_id: str, proxies: dict[str, ProxyConfig]
@@ -243,6 +409,18 @@ class GroupChatEngine:
             )
             if account_id:
                 speaker_name = self._display_names.get(account_id, speaker_name)
+            reply_to_msg_id = int(item.get("reply_to_msg_id") or 0) or None
+            reply_to_sender_id = int(item.get("reply_to_sender_id") or 0)
+            reply_to_account_id = self._user_id_to_account.get(reply_to_sender_id, "")
+            reply_to_external = False
+            quoted_text = str(item.get("reply_to_text") or "").strip()
+            replied_message = self._find_message_by_id(session, reply_to_msg_id)
+            if replied_message:
+                if not reply_to_account_id and not replied_message.get("external"):
+                    reply_to_account_id = str(replied_message.get("speaker_account_id") or "")
+                reply_to_external = bool(replied_message.get("external", False))
+                if not quoted_text:
+                    quoted_text = str(replied_message.get("text") or "").strip()
             self.state.add_group_message(
                 session,
                 speaker_account_id=account_id or f"ext:{sender_id}",
@@ -250,8 +428,26 @@ class GroupChatEngine:
                 text=item["text"],
                 msg_id=mid,
                 external=external,
+                reply_to_msg_id=reply_to_msg_id,
+                reply_to_speaker_account_id=reply_to_account_id,
+                reply_to_external=reply_to_external,
                 max_stored=200,
             )
+            session = self.state.group_session or session
+            if external and self.settings.reply_to_humans_enabled:
+                quoted_our_bot = bool(reply_to_msg_id and reply_to_account_id and not reply_to_external)
+                should_consider = quoted_our_bot or not self.settings.reply_to_humans_only_on_quote
+                chance = min(1.0, max(0.0, float(self.settings.reply_to_humans_chance or 0.0)))
+                if should_consider and random.random() <= chance:
+                    self._queue_external_reply(
+                        msg_id=mid,
+                        speaker_account_id=f"ext:{sender_id}",
+                        speaker_name=str(speaker_name),
+                        text=item["text"],
+                        quoted_text=quoted_text,
+                        quoted_speaker_account_id=reply_to_account_id,
+                        quoted_external=reply_to_external,
+                    )
             low = item["text"].lower()
             for kw in self.settings.stop_keywords:
                 if kw and kw.lower() in low:
@@ -275,6 +471,9 @@ class GroupChatEngine:
         self.reset_stop()
         self.settings = GroupChatSettings.load(self._settings_path())
         self.state.load()
+        self._pending_external_replies = []
+        self._handled_external_msg_ids = set()
+        self._next_external_reply_after = 0.0
         roles = RolesConfig.load(self.base_dir / self.config.roles_file)
         role_overrides = role_overrides or {}
         activity_weights = activity_weights or {}
@@ -339,6 +538,7 @@ class GroupChatEngine:
             status_text="подключение...",
             session_counts=dict(session.session_counts),
             day_counts=dict(session.day_counts),
+            pending_external_replies=0,
         )
         self._emit()
 
@@ -424,6 +624,106 @@ class GroupChatEngine:
                         break
                     continue
 
+                if self._pending_external_replies:
+                    self._refresh_pending_stats()
+                    if now_mono < self._next_external_reply_after:
+                        left = max(1, int(self._next_external_reply_after - now_mono))
+                        self.stats.status_text = f"ожидание ответа живому участнику ~{left}с"
+                        self._emit()
+                        if await self._sleep_interruptible(min(10, left)):
+                            break
+                        continue
+
+                    payload = self._pending_external_replies[0]
+                    preferred_account_id = str(payload.get("quoted_speaker_account_id") or "")
+                    speaker = self._pick_reply_speaker(session, preferred_account_id=preferred_account_id)
+                    if not speaker:
+                        self.stats.status_text = "нет доступного участника для ответа живому"
+                        self._emit()
+                        if await self._sleep_interruptible(20):
+                            break
+                        continue
+
+                    client = self._clients.get(speaker)
+                    if not client:
+                        self._pending_external_replies.pop(0)
+                        self._refresh_pending_stats()
+                        continue
+
+                    quoted_text = str(payload.get("quoted_text") or "").strip()
+                    human_name = str(payload.get("speaker_name") or "участник")
+                    human_text = str(payload.get("text") or "").strip()
+                    context_parts = []
+                    if session.extra_context:
+                        context_parts.append(session.extra_context)
+                    context_parts.append(
+                        "В чате живой участник обратился к одному из ваших аккаунтов. "
+                        "Нужен один естественный ответ от имени текущего спикера."
+                    )
+                    context_parts.append(
+                        "Не устраивай цепную реакцию, не призывай остальных аккаунтов отвечать и не раскрывай, "
+                        "что аккаунты связаны между собой."
+                    )
+                    context_parts.append(
+                        "Ответ должен быть коротким или средним, по делу, в живом человеческом стиле."
+                    )
+                    if quoted_text:
+                        context_parts.append(f"Цитируемая реплика: {quoted_text}")
+                    context_parts.append(f"Сообщение живого участника {human_name}: {human_text}")
+
+                    self.stats.status_text = f"{speaker}: отвечает живому участнику..."
+                    self._emit()
+                    try:
+                        text = await llm.generate_group_message(
+                            role_prompt=session.role_prompts.get(speaker, ""),
+                            topic=session.topic,
+                            transcript=self._build_transcript(session),
+                            speaker_label=self._speaker_label(session, speaker),
+                            participants=self._participants_labels(session),
+                            language=self.settings.language,
+                            extra_context="\n".join(part for part in context_parts if part),
+                            short_reply=True,
+                            temperature=self.settings.temperature,
+                            max_tokens=self.settings.max_tokens,
+                        )
+                    except Exception as exc:
+                        self.log(f"❌ LLM {speaker} (ответ живому): {exc}")
+                        if await self._sleep_interruptible(15):
+                            break
+                        continue
+
+                    parts = self._split_text(text)
+                    if not parts:
+                        self._pending_external_replies.pop(0)
+                        self._refresh_pending_stats()
+                        continue
+
+                    session, sent = await self._send_generated_parts(
+                        session,
+                        speaker,
+                        client,
+                        parts[:1],
+                        reply_to_msg_id=int(payload.get("msg_id") or 0) or None,
+                        reply_to_speaker_account_id=str(payload.get("speaker_account_id") or ""),
+                        reply_to_external=True,
+                    )
+                    if sent:
+                        self._handled_external_msg_ids.add(int(payload.get("msg_id") or 0))
+                        self._pending_external_replies.pop(0)
+                        self._refresh_pending_stats()
+                        cooldown = random.uniform(
+                            self.settings.reply_to_humans_cooldown_min_sec,
+                            max(
+                                self.settings.reply_to_humans_cooldown_min_sec,
+                                self.settings.reply_to_humans_cooldown_max_sec,
+                            ),
+                        )
+                        self._next_external_reply_after = asyncio.get_event_loop().time() + cooldown
+                    else:
+                        if await self._sleep_interruptible(10):
+                            break
+                    continue
+
                 if random.random() < self.settings.quiet_break_chance:
                     mins = random.randint(
                         self.settings.quiet_break_min_min,
@@ -467,31 +767,15 @@ class GroupChatEngine:
                 elif self.settings.reply_style == "mixed":
                     short = random.random() < self.settings.short_reply_chance
 
-                participants = [
-                    f"{self._display_names.get(a, a)} ({session.role_names.get(a, '')})"
-                    for a in session.account_ids
-                ]
-                transcript = [
-                    {
-                        "speaker_name": m.speaker_name,
-                        "text": m.text,
-                        "speaker": m.speaker_account_id,
-                    }
-                    for m in session.messages[-self.settings.history_limit :]
-                ]
-                speaker_label = (
-                    f"{self._display_names.get(speaker, speaker)} "
-                    f"[{session.role_names.get(speaker, 'роль')}]"
-                )
                 self.stats.status_text = f"{speaker}: генерирует..."
                 self._emit()
                 try:
                     text = await llm.generate_group_message(
                         role_prompt=session.role_prompts.get(speaker, ""),
                         topic=session.topic,
-                        transcript=transcript,
-                        speaker_label=speaker_label,
-                        participants=participants,
+                        transcript=self._build_transcript(session),
+                        speaker_label=self._speaker_label(session, speaker),
+                        participants=self._participants_labels(session),
                         language=self.settings.language,
                         extra_context=session.extra_context,
                         short_reply=short,
@@ -514,64 +798,12 @@ class GroupChatEngine:
                 )
                 parts = parts[:burst_limit]
 
-                for idx, part in enumerate(parts):
-                    if self._stop.is_set():
-                        break
-                    if not self._quota_ok(session, speaker):
-                        break
-                    typing_sec = self._typing_seconds(part)
-                    try:
-                        await client.show_typing_in_chat(session.chat_id, typing_sec)
-                        msg_id = await client.send_message_to_chat(session.chat_id, part)
-                    except FloodWaitError as exc:
-                        wait = int(getattr(exc, "seconds", 30) or 30)
-                        self.log(f"⏳ FloodWait {wait}с ({speaker})")
-                        if await self._sleep_interruptible(wait + 2):
-                            break
-                        continue
-                    except Exception as exc:
-                        self.log(f"❌ Отправка {speaker}: {format_telegram_error(exc)}")
-                        break
-
-                    self._known_msg_ids.add(msg_id)
-                    self.state.add_group_message(
-                        session,
-                        speaker_account_id=speaker,
-                        speaker_name=self._display_names.get(speaker, speaker),
-                        text=part,
-                        msg_id=msg_id,
-                        external=False,
-                    )
-                    session = self.state.group_session or session
-                    session.session_counts[speaker] = session.session_counts.get(speaker, 0) + 1
-                    session.day_counts[speaker] = session.day_counts.get(speaker, 0) + 1
-                    session.group_day_count += 1
-                    self.state.upsert_group_session(session)
-
-                    now_t = asyncio.get_event_loop().time()
-                    self._hourly.setdefault(speaker, []).append(now_t)
-                    self._last_speakers.append(speaker)
-                    if len(self._last_speakers) > 20:
-                        self._last_speakers = self._last_speakers[-20:]
-
-                    self.stats.messages_sent += 1
-                    self.stats.last_speaker = speaker
-                    self.stats.last_message = part[:120]
-                    self.stats.session_counts = dict(session.session_counts)
-                    self.stats.day_counts = dict(session.day_counts)
-                    self.stats.group_day_count = session.group_day_count
-                    self.stats.recent_messages = [m.to_dict() for m in session.messages[-12:]]
-                    self.stats.status_text = f"{speaker}: отправил"
-                    self._emit()
-                    self.log(f"→ {speaker}: {part[:80]}")
-
-                    if idx < len(parts) - 1:
-                        pause = random.uniform(
-                            self.settings.delay_within_burst_min_sec,
-                            self.settings.delay_within_burst_max_sec,
-                        )
-                        if await self._sleep_interruptible(pause):
-                            break
+                session, _sent = await self._send_generated_parts(
+                    session,
+                    speaker,
+                    client,
+                    parts,
+                )
 
                 between = random.uniform(
                     self.settings.delay_between_speakers_min_sec,

@@ -1303,6 +1303,8 @@ class AppService:
             "day_counts": day_counts,
             "group_day_count": s.group_day_count or (session.group_day_count if session else 0),
             "recent_messages": recent_messages,
+            "pending_external_replies": s.pending_external_replies,
+            "last_external_trigger": s.last_external_trigger,
             "running_accounts": running_accounts,
             "participants": participants,
             "extra_context": session.extra_context if session else "",
