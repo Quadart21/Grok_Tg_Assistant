@@ -183,6 +183,8 @@ class GroupChatStartBody(BaseModel):
     extra_context: str = ""
     role_overrides: dict[str, GroupChatRoleOverride] = {}
     activity_weights: dict[str, float] = {}
+    account_schedules: dict[str, list[dict]] = {}
+    friendships: dict[str, list[str]] = {}
 
 
 class GroupChatSettingsBody(BaseModel):
@@ -222,6 +224,7 @@ class GroupChatSettingsBody(BaseModel):
     split_parts_max: int = 3
     language: str = "ru"
     history_limit: int = 40
+    reconnect_history_limit: int = 50
     temperature: float = 0.9
     max_tokens: int = 250
     reply_style: str = "mixed"

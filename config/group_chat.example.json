@@ -37,6 +37,7 @@
   "dedupe_retry_attempts": 3,
   "language": "ru",
   "history_limit": 40,
+  "reconnect_history_limit": 50,
   "temperature": 0.9,
   "max_tokens": 250,
   "reply_style": "mixed",

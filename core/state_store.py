@@ -4,6 +4,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from core.config import ProxyConfig
 from core.json_store import read_json, write_json_atomic
@@ -226,6 +227,8 @@ class GroupSessionRecord:
     role_prompts: dict[str, str] = field(default_factory=dict)
     role_names: dict[str, str] = field(default_factory=dict)
     activity_weights: dict[str, float] = field(default_factory=dict)
+    account_schedules: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    friendships: dict[str, list[str]] = field(default_factory=dict)
     extra_context: str = ""
     status: str = "idle"
     created_at: str = ""
@@ -245,6 +248,14 @@ class GroupSessionRecord:
             "role_prompts": dict(self.role_prompts),
             "role_names": dict(self.role_names),
             "activity_weights": dict(self.activity_weights),
+            "account_schedules": {
+                str(k): [dict(item) for item in items if isinstance(item, dict)]
+                for k, items in self.account_schedules.items()
+            },
+            "friendships": {
+                str(k): [str(friend) for friend in friends]
+                for k, friends in self.friendships.items()
+            },
             "extra_context": self.extra_context,
             "status": self.status,
             "created_at": self.created_at,
@@ -267,6 +278,16 @@ class GroupSessionRecord:
             role_names={str(k): str(v) for k, v in (data.get("role_names") or {}).items()},
             activity_weights={
                 str(k): float(v) for k, v in (data.get("activity_weights") or {}).items()
+            },
+            account_schedules={
+                str(k): [dict(item) for item in items if isinstance(item, dict)]
+                for k, items in (data.get("account_schedules") or {}).items()
+                if isinstance(items, list)
+            },
+            friendships={
+                str(k): [str(friend) for friend in friends]
+                for k, friends in (data.get("friendships") or {}).items()
+                if isinstance(friends, list)
             },
             extra_context=str(data.get("extra_context", "")),
             status=str(data.get("status", "idle")),

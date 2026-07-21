@@ -1162,6 +1162,50 @@ class AppService:
         settings.save(self.group_chat_settings_path)
         return settings.to_dict()
 
+    @staticmethod
+    def _normalize_group_account_schedules(
+        account_ids: list[str],
+        account_schedules: dict[str, list[dict[str, Any]]] | None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        normalized: dict[str, list[dict[str, Any]]] = {}
+        for account_id in account_ids:
+            windows: list[dict[str, Any]] = []
+            for item in (account_schedules or {}).get(account_id) or []:
+                if not isinstance(item, dict):
+                    continue
+                start = str(item.get("start") or "").strip()
+                end = str(item.get("end") or "").strip()
+                if not start or not end:
+                    continue
+                days_raw = item.get("days")
+                days: list[int] = []
+                if isinstance(days_raw, list):
+                    for day in days_raw:
+                        text = str(day or "").strip()
+                        if text.isdigit():
+                            value = int(text)
+                            if 0 <= value <= 6:
+                                days.append(value)
+                windows.append({"days": days, "start": start, "end": end})
+            normalized[account_id] = windows
+        return normalized
+
+    @staticmethod
+    def _normalize_group_friendships(
+        account_ids: list[str],
+        friendships: dict[str, list[str]] | None,
+    ) -> dict[str, list[str]]:
+        allowed = set(account_ids)
+        normalized: dict[str, set[str]] = {account_id: set() for account_id in account_ids}
+        for account_id in account_ids:
+            for friend_id in (friendships or {}).get(account_id) or []:
+                friend = str(friend_id or "").strip()
+                if not friend or friend == account_id or friend not in allowed:
+                    continue
+                normalized[account_id].add(friend)
+                normalized[friend].add(account_id)
+        return {account_id: sorted(friends) for account_id, friends in normalized.items()}
+
     def discover_group_chats(self, account_ids: list[str]) -> list[dict]:
         if len(account_ids) < 2:
             raise ValueError("Выберите минимум 2 аккаунта")
@@ -1275,6 +1319,13 @@ class AppService:
         role_names = session.role_names if session else {}
         role_prompts = session.role_prompts if session else {}
         weights = session.activity_weights if session else {}
+        schedules = session.account_schedules if session else {}
+        friendships = session.friendships if session else {}
+        online_accounts = (
+            self.group_chat_engine.online_accounts()
+            if self.group_chat_engine and self._group_chat_running
+            else {}
+        )
         for account_id in account_ids:
             participants.append(
                 {
@@ -1282,9 +1333,12 @@ class AppService:
                     "role_name": role_names.get(account_id, ""),
                     "role_prompt": role_prompts.get(account_id, ""),
                     "weight": weights.get(account_id, 1),
+                    "schedule": schedules.get(account_id, []),
+                    "friends": friendships.get(account_id, []),
                     "session_count": session_counts.get(account_id, 0),
                     "day_count": day_counts.get(account_id, 0),
                     "running": account_id in self._group_chat_account_ids,
+                    "online": online_accounts.get(account_id, account_id in self._group_chat_account_ids),
                 }
             )
 
@@ -1306,8 +1360,11 @@ class AppService:
             "pending_external_replies": s.pending_external_replies,
             "last_external_trigger": s.last_external_trigger,
             "running_accounts": running_accounts,
+            "online_accounts": online_accounts,
             "participants": participants,
             "extra_context": session.extra_context if session else "",
+            "account_schedules": schedules,
+            "friendships": friendships,
             "created_at": session.created_at if session else "",
             "last_activity": session.last_activity if session else "",
             "stored_status": session.status if session else ("running" if self._group_chat_running else "idle"),
@@ -1321,6 +1378,8 @@ class AppService:
         topic: str,
         role_overrides: dict[str, dict] | None = None,
         activity_weights: dict[str, float] | None = None,
+        account_schedules: dict[str, list[dict[str, Any]]] | None = None,
+        friendships: dict[str, list[str]] | None = None,
         extra_context: str = "",
         chat_title: str = "",
     ) -> tuple[bool, str]:
@@ -1353,6 +1412,14 @@ class AppService:
                 if overlap:
                     return False, f"Аккаунты заняты секретарём: {', '.join(sorted(overlap))}"
 
+            normalized_schedules = self._normalize_group_account_schedules(
+                account_ids,
+                account_schedules,
+            )
+            normalized_friendships = self._normalize_group_friendships(
+                account_ids,
+                friendships,
+            )
             self._group_chat_running = True
             self._group_chat_account_ids = set(account_ids)
             self._group_chat_stats = GroupChatStats(
@@ -1381,6 +1448,8 @@ class AppService:
                         topic=topic,
                         role_overrides=role_overrides or {},
                         activity_weights=activity_weights or {},
+                        account_schedules=normalized_schedules,
+                        friendships=normalized_friendships,
                         extra_context=extra_context,
                         chat_title=chat_title,
                     )
@@ -1404,6 +1473,8 @@ class AppService:
         topic: str,
         role_overrides: dict[str, dict] | None = None,
         activity_weights: dict[str, float] | None = None,
+        account_schedules: dict[str, list[dict[str, Any]]] | None = None,
+        friendships: dict[str, list[str]] | None = None,
         extra_context: str = "",
         chat_title: str = "",
     ) -> tuple[bool, str]:
@@ -1433,6 +1504,14 @@ class AppService:
             roles = RolesConfig.load(self.base_dir / self.config.roles_file)
             overrides = role_overrides or {}
             weights_input = activity_weights or {}
+            normalized_schedules = self._normalize_group_account_schedules(
+                account_ids,
+                account_schedules,
+            )
+            normalized_friendships = self._normalize_group_friendships(
+                account_ids,
+                friendships,
+            )
             role_prompts: dict[str, str] = {}
             role_names: dict[str, str] = {}
             weights: dict[str, float] = {}
@@ -1458,6 +1537,8 @@ class AppService:
                 role_prompts=role_prompts,
                 role_names=role_names,
                 activity_weights=weights,
+                account_schedules=normalized_schedules,
+                friendships=normalized_friendships,
                 extra_context=extra_context.strip(),
                 status="active",
                 created_at=current.created_at if current else "",

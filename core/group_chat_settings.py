@@ -84,6 +84,7 @@ class GroupChatSettings:
     # Контент / LLM
     language: str = "ru"
     history_limit: int = 40
+    reconnect_history_limit: int = 50
     temperature: float = 0.9
     max_tokens: int = 250
     reply_style: str = "mixed"  # short | medium | mixed
@@ -143,6 +144,7 @@ class GroupChatSettings:
             "dedupe_retry_attempts": self.dedupe_retry_attempts,
             "language": self.language,
             "history_limit": self.history_limit,
+            "reconnect_history_limit": self.reconnect_history_limit,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
             "reply_style": self.reply_style,
@@ -201,6 +203,7 @@ class GroupChatSettings:
             dedupe_retry_attempts=int(data.get("dedupe_retry_attempts", 3)),
             language=str(data.get("language", "ru")),
             history_limit=int(data.get("history_limit", 40)),
+            reconnect_history_limit=int(data.get("reconnect_history_limit", 50)),
             temperature=float(data.get("temperature", 0.9)),
             max_tokens=int(data.get("max_tokens", 250)),
             reply_style=str(data.get("reply_style", "mixed")),

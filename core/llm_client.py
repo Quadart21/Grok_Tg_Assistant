@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx
+from typing import Any
 
 from core.dialog_settings import DialogSettings
 from core.llm_providers import chat_completions_url, provider_info
@@ -154,7 +155,7 @@ class LLMClient:
         self,
         role_prompt: str,
         topic: str,
-        transcript: list[dict],
+        transcript: list[dict[str, Any]],
         speaker_label: str,
         participants: list[str],
         language: str = "ru",
@@ -179,6 +180,7 @@ class LLMClient:
             "- Не копируйте чужие формулировки дословно.\n"
             "- Не повторяйте ту же мысль, аналогию, шутку или вывод даже в перефразе.\n"
             "- Если похожая мысль уже прозвучала, выбирайте новый угол: вопрос, пример, возражение, уточнение или следующий шаг разговора.\n"
+            "- Учитывайте связи reply в истории. Формат `А -> Б` значит, что А отвечает Б; не путайте, кто кому написал.\n"
             "- Учитывайте тему и последние сообщения.\n"
             "- Можно соглашаться, спорить мягко, шутить, задавать вопросы — по роли.\n"
             "- Не здоровайтесь заново, если диалог уже идёт.\n"
@@ -196,7 +198,15 @@ class LLMClient:
             name = item.get("speaker_name") or item.get("speaker") or "?"
             text = (item.get("text") or item.get("content") or "").strip()
             if text:
-                lines.append(f"{name}: {text}")
+                reply_to_name = (item.get("reply_to_speaker") or "").strip()
+                reply_to_text = (item.get("reply_to_text") or "").strip().replace("\n", " ")
+                if reply_to_name:
+                    line = f"{name} -> {reply_to_name}: {text}"
+                    if reply_to_text:
+                        line += f" [ответ на: {reply_to_text[:160]}]"
+                    lines.append(line)
+                else:
+                    lines.append(f"{name}: {text}")
         history_block = "\n".join(lines) if lines else "(чат пока пустой или тихий)"
 
         user = (

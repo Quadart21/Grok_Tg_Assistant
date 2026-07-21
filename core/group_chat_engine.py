@@ -12,7 +12,7 @@ from typing import Any, Callable
 from telethon.errors import FloodWaitError
 
 from core.config import AppConfig, ProxyConfig, RolesConfig
-from core.group_chat_settings import GroupChatSettings
+from core.group_chat_settings import ActivityWindow, GroupChatSettings
 from core.llm_client import create_llm_client
 from core.proxy_manager import load_proxies
 from core.proxy_pool import load_pool, pool_path, resolve_pool_proxy
@@ -81,6 +81,9 @@ class GroupChatEngine:
         self._handled_external_msg_ids: set[int] = set()
         self._next_external_reply_after: float = 0.0
         self._active_chat_id: int = 0
+        self._account_online: dict[str, bool] = {}
+        self._account_resume_pending: dict[str, bool] = {}
+        self._friendships: dict[str, set[str]] = {}
 
     def stop(self) -> None:
         self._stop.set()
@@ -115,6 +118,15 @@ class GroupChatEngine:
             self._in_quiet_until = 0.0
 
         self._active_chat_id = int(session.chat_id)
+        self._friendships = self._normalize_session_friendships(session)
+        self._account_online = {
+            account_id: self._account_online.get(account_id, True)
+            for account_id in session.account_ids
+        }
+        self._account_resume_pending = {
+            account_id: self._account_resume_pending.get(account_id, False)
+            for account_id in session.account_ids
+        }
         self.stats.chat_id = session.chat_id
         self.stats.chat_title = session.chat_title
         self.stats.topic = session.topic
@@ -126,14 +138,210 @@ class GroupChatEngine:
         self._refresh_pending_stats()
         return session
 
+    def _normalize_session_friendships(
+        self, session: GroupSessionRecord
+    ) -> dict[str, set[str]]:
+        links: dict[str, set[str]] = {account_id: set() for account_id in session.account_ids}
+        for account_id, friends in (session.friendships or {}).items():
+            if account_id not in links:
+                continue
+            for friend_id in friends or []:
+                if friend_id not in links or friend_id == account_id:
+                    continue
+                links[account_id].add(friend_id)
+                links[friend_id].add(account_id)
+        return links
+
     @staticmethod
-    def _find_message_by_id(session: GroupSessionRecord, msg_id: int | None) -> dict[str, Any] | None:
+    def _window_matches(window: ActivityWindow, now: datetime) -> bool:
+        weekday = now.weekday()
+        minutes = now.hour * 60 + now.minute
+        if weekday not in window.days:
+            return False
+        sh, sm = _parse_hhmm(window.start)
+        eh, em = _parse_hhmm(window.end)
+        start_m = sh * 60 + sm
+        end_m = eh * 60 + em
+        if start_m <= end_m:
+            return start_m <= minutes < end_m
+        return minutes >= start_m or minutes < end_m
+
+    def _windows_from_session(self, session: GroupSessionRecord, account_id: str) -> list[ActivityWindow]:
+        windows: list[ActivityWindow] = []
+        for item in (session.account_schedules or {}).get(account_id, []):
+            if not isinstance(item, dict):
+                continue
+            start = str(item.get("start") or "").strip()
+            end = str(item.get("end") or "").strip()
+            if not start or not end:
+                continue
+            raw_days = item.get("days")
+            if isinstance(raw_days, list):
+                days = [int(day) for day in raw_days if isinstance(day, int) or str(day).isdigit()]
+            else:
+                days = list(range(7))
+            windows.append(ActivityWindow(start=start, end=end, days=days or list(range(7))))
+        return windows
+
+    def _is_account_scheduled_online(
+        self,
+        session: GroupSessionRecord,
+        account_id: str,
+        now: datetime | None = None,
+    ) -> bool:
+        if not self.settings.use_schedule:
+            return True
+        now = now or self._now_local()
+        if not self._in_activity_window(now):
+            return False
+        windows = self._windows_from_session(session, account_id)
+        if not windows:
+            return True
+        return any(self._window_matches(window, now) for window in windows)
+
+    def online_accounts(self) -> dict[str, bool]:
+        return dict(self._account_online)
+
+    def _speaker_friend_context(self, session: GroupSessionRecord, speaker: str) -> str:
+        friend_ids = self._friendships.get(speaker, set())
+        if not friend_ids:
+            return ""
+        friend_labels = [
+            self._display_names.get(friend_id, session.role_names.get(friend_id, friend_id))
+            for friend_id in sorted(friend_ids)
+        ]
+        return (
+            "В чате у тебя давние приятельские отношения с: "
+            + ", ".join(friend_labels)
+            + ". С ними можно звучать чуть теплее, подхватывать их шутки и говорить естественно, "
+            "но не проговаривать это напрямую."
+        )
+
+    def _resume_context(self, limit: int) -> str:
+        return (
+            f"Ты только что вернулся в чат после паузы. Внимательно опирайся на последние {limit} сообщений "
+            "и продолжай текущую линию разговора без приветствия и без фразы, что ты что-то пропустил."
+        )
+
+    def _compose_speaker_context(
+        self,
+        session: GroupSessionRecord,
+        speaker: str,
+        base_context: str = "",
+    ) -> str:
+        parts: list[str] = []
+        if base_context.strip():
+            parts.append(base_context.strip())
+        friend_context = self._speaker_friend_context(session, speaker)
+        if friend_context:
+            parts.append(friend_context)
+        if self._account_resume_pending.get(speaker):
+            limit = max(self.settings.history_limit, self.settings.reconnect_history_limit)
+            parts.append(self._resume_context(limit))
+        return "\n".join(parts)
+
+    async def _refresh_account_presence(
+        self,
+        session: GroupSessionRecord,
+        client: TelegramAccountClient,
+    ) -> GroupSessionRecord:
+        now = self._now_local()
+        history_refresh_needed = False
+        for account_id in session.account_ids:
+            scheduled_online = self._is_account_scheduled_online(session, account_id, now)
+            was_online = self._account_online.get(account_id)
+            if was_online is None:
+                self._account_online[account_id] = scheduled_online
+                self._account_resume_pending.setdefault(account_id, False)
+                continue
+            if scheduled_online and not was_online:
+                self._account_online[account_id] = True
+                self._account_resume_pending[account_id] = True
+                history_refresh_needed = True
+                self.log(f"↺ {account_id}: вернулся онлайн по расписанию")
+            elif not scheduled_online and was_online:
+                self._account_online[account_id] = False
+                self.log(f"⏸ {account_id}: ушёл оффлайн по расписанию")
+        if history_refresh_needed:
+            await self._sync_history(
+                session,
+                client,
+                limit=max(self.settings.history_limit, self.settings.reconnect_history_limit),
+            )
+            session = self.state.group_session or session
+        return session
+
+    @staticmethod
+    def _find_message_record_by_id(session: GroupSessionRecord, msg_id: int | None) -> Any | None:
         if not msg_id:
             return None
         for message in reversed(session.messages):
             if int(message.msg_id) == int(msg_id):
-                return message.to_dict()
+                return message
         return None
+
+    @classmethod
+    def _find_message_by_id(cls, session: GroupSessionRecord, msg_id: int | None) -> dict[str, Any] | None:
+        message = cls._find_message_record_by_id(session, msg_id)
+        if message is None:
+            return None
+        return message.to_dict()
+
+    @staticmethod
+    def _message_preview(text: str, limit: int = 180) -> str:
+        preview = (text or "").strip().replace("\n", " ")
+        if len(preview) <= limit:
+            return preview
+        return preview[: limit - 1].rstrip() + "…"
+
+    def _count_direct_replies(self, session: GroupSessionRecord, msg_id: int) -> int:
+        if not msg_id:
+            return 0
+        return sum(1 for message in session.messages if int(message.reply_to_msg_id or 0) == int(msg_id))
+
+    def _pick_reply_target(self, session: GroupSessionRecord, speaker: str) -> dict[str, Any] | None:
+        recent_messages = session.messages[
+            -max(self.settings.history_limit, self.settings.reconnect_history_limit) :
+        ]
+        if not recent_messages:
+            return None
+
+        replied_targets = {
+            int(message.reply_to_msg_id)
+            for message in recent_messages
+            if message.speaker_account_id == speaker and message.reply_to_msg_id
+        }
+        friend_ids = self._friendships.get(speaker, set())
+
+        best_score = float("-inf")
+        best_message: Any | None = None
+        for offset, message in enumerate(reversed(recent_messages), start=1):
+            msg_id = int(message.msg_id or 0)
+            if not msg_id or message.speaker_account_id == speaker:
+                continue
+
+            score = max(0.0, 60.0 - offset * 3.5)
+            if offset == 1:
+                score += 10.0
+            if message.external:
+                score += 14.0
+            if message.speaker_account_id in friend_ids:
+                score += 5.0
+            if message.reply_to_speaker_account_id == speaker:
+                score += 8.0
+            if msg_id in replied_targets:
+                score -= 16.0
+
+            direct_replies = self._count_direct_replies(session, msg_id)
+            score -= min(direct_replies, 4) * 2.5
+
+            if score > best_score:
+                best_score = score
+                best_message = message
+
+        if best_message is None or best_score < 1.0:
+            return None
+        return best_message.to_dict()
 
     def _pick_reply_speaker(
         self, session: GroupSessionRecord, preferred_account_id: str = ""
@@ -142,20 +350,81 @@ class GroupChatEngine:
             preferred_account_id
             and preferred_account_id in session.account_ids
             and preferred_account_id in self._clients
+            and self._account_online.get(preferred_account_id, True)
             and self._quota_ok(session, preferred_account_id)
         ):
             return preferred_account_id
         return self._pick_speaker(session)
 
-    def _build_transcript(self, session: GroupSessionRecord) -> list[dict[str, str]]:
-        return [
-            {
+    def _reply_target_context(
+        self,
+        session: GroupSessionRecord,
+        target: dict[str, Any] | None,
+    ) -> str:
+        if not target:
+            return ""
+
+        target_name = (
+            str(target.get("speaker_name") or "")
+            or self._display_names.get(str(target.get("speaker_account_id") or ""), "")
+            or str(target.get("speaker_account_id") or "собеседник")
+        )
+        target_text = self._message_preview(str(target.get("text") or ""))
+        if not target_text:
+            return ""
+
+        parts = [
+            "Сообщение будет отправлено как reply/цитата в Telegram.",
+            f"Ответь именно на реплику {target_name}: {target_text}",
+            "Сохраняй нить разговора: помни, кто кому отвечает, и не путай адресатов.",
+        ]
+
+        parent = self._find_message_by_id(session, int(target.get("reply_to_msg_id") or 0) or None)
+        if parent:
+            parent_name = (
+                str(parent.get("speaker_name") or "")
+                or str(parent.get("speaker_account_id") or "собеседник")
+            )
+            parent_text = self._message_preview(str(parent.get("text") or ""))
+            if parent_text:
+                parts.append(
+                    f"Эта реплика сама была ответом на {parent_name}: {parent_text}"
+                )
+
+        return "\n".join(parts)
+
+    def _build_transcript(
+        self, session: GroupSessionRecord, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        history_limit = max(1, int(limit or self.settings.history_limit))
+        transcript: list[dict[str, Any]] = []
+        for message in session.messages[-history_limit:]:
+            item: dict[str, Any] = {
                 "speaker_name": message.speaker_name,
                 "text": message.text,
                 "speaker": message.speaker_account_id,
+                "msg_id": message.msg_id,
+                "external": message.external,
             }
-            for message in session.messages[-self.settings.history_limit :]
-        ]
+            if message.reply_to_msg_id:
+                item["reply_to_msg_id"] = message.reply_to_msg_id
+                item["reply_to_external"] = message.reply_to_external
+                replied = self._find_message_by_id(session, message.reply_to_msg_id)
+                reply_name = ""
+                reply_text = ""
+                if replied:
+                    reply_name = str(replied.get("speaker_name") or replied.get("speaker_account_id") or "")
+                    reply_text = str(replied.get("text") or "")
+                elif message.reply_to_speaker_account_id:
+                    reply_name = self._display_names.get(
+                        message.reply_to_speaker_account_id,
+                        message.reply_to_speaker_account_id,
+                    )
+                item["reply_to_speaker"] = reply_name
+                if reply_text:
+                    item["reply_to_text"] = reply_text
+            transcript.append(item)
+        return transcript
 
     def _participants_labels(self, session: GroupSessionRecord) -> list[str]:
         return [
@@ -327,6 +596,7 @@ class GroupChatEngine:
         speaker: str,
         short_reply: bool,
         extra_context: str = "",
+        transcript_limit: int | None = None,
     ) -> str:
         retries = max(0, int(self.settings.dedupe_retry_attempts or 0))
         retry_context = extra_context.strip()
@@ -335,7 +605,7 @@ class GroupChatEngine:
             text = await llm.generate_group_message(
                 role_prompt=session.role_prompts.get(speaker, ""),
                 topic=session.topic,
-                transcript=self._build_transcript(session),
+                transcript=self._build_transcript(session, limit=transcript_limit),
                 speaker_label=self._speaker_label(session, speaker),
                 participants=self._participants_labels(session),
                 language=self.settings.language,
@@ -491,6 +761,8 @@ class GroupChatEngine:
                 )
                 if await self._sleep_interruptible(pause):
                     break
+        if sent_any:
+            self._account_resume_pending[speaker] = False
         return session, sent_any
 
     def _resolve_proxy(
@@ -576,7 +848,13 @@ class GroupChatEngine:
         return True
 
     def _pick_speaker(self, session: GroupSessionRecord) -> str | None:
-        eligible = [a for a in session.account_ids if self._quota_ok(session, a)]
+        eligible = [
+            account_id
+            for account_id in session.account_ids
+            if account_id in self._clients
+            and self._account_online.get(account_id, True)
+            and self._quota_ok(session, account_id)
+        ]
         if not eligible:
             return None
         # Не давать одному писать слишком часто подряд
@@ -588,6 +866,9 @@ class GroupChatEngine:
         weights = []
         for aid in eligible:
             w = float(session.activity_weights.get(aid, 1.0) or 1.0)
+            last_speaker = self._last_speakers[-1] if self._last_speakers else ""
+            if last_speaker and aid in self._friendships.get(last_speaker, set()):
+                w *= 1.35
             weights.append(max(0.05, w))
         return random.choices(eligible, weights=weights, k=1)[0]
 
@@ -629,10 +910,16 @@ class GroupChatEngine:
             await asyncio.sleep(min(1.0, end - asyncio.get_event_loop().time()))
         return self._stop.is_set()
 
-    async def _sync_history(self, session: GroupSessionRecord, client: TelegramAccountClient) -> None:
+    async def _sync_history(
+        self,
+        session: GroupSessionRecord,
+        client: TelegramAccountClient,
+        limit: int | None = None,
+    ) -> None:
         try:
             history = await client.get_chat_history(
-                session.chat_id, limit=self.settings.history_limit
+                session.chat_id,
+                limit=max(1, int(limit or self.settings.history_limit)),
             )
         except Exception as exc:
             self.log(f"⚠ История чата: {format_telegram_error(exc)}")
@@ -706,6 +993,8 @@ class GroupChatEngine:
         topic: str,
         role_overrides: dict[str, dict] | None = None,
         activity_weights: dict[str, float] | None = None,
+        account_schedules: dict[str, list[dict[str, Any]]] | None = None,
+        friendships: dict[str, list[str]] | None = None,
         extra_context: str = "",
         chat_title: str = "",
     ) -> None:
@@ -715,9 +1004,14 @@ class GroupChatEngine:
         self._pending_external_replies = []
         self._handled_external_msg_ids = set()
         self._next_external_reply_after = 0.0
+        self._account_online = {}
+        self._account_resume_pending = {}
+        self._friendships = {}
         roles = RolesConfig.load(self.base_dir / self.config.roles_file)
         role_overrides = role_overrides or {}
         activity_weights = activity_weights or {}
+        account_schedules = account_schedules or {}
+        friendships = friendships or {}
 
         sessions = discover_sessions(self.base_dir / self.config.sessions_dir)
         by_id = {s.account_id: s for s in sessions}
@@ -761,6 +1055,8 @@ class GroupChatEngine:
             role_prompts=role_prompts,
             role_names=role_names,
             activity_weights=weights,
+            account_schedules=account_schedules,
+            friendships=friendships,
             extra_context=extra_context.strip(),
             status="active",
             session_counts={a: 0 for a in account_ids},
@@ -812,6 +1108,7 @@ class GroupChatEngine:
 
             primary = self._clients[account_ids[0]]
             await self._sync_history(session, primary)
+            session = await self._refresh_account_presence(session, primary)
             if not session.chat_title:
                 try:
                     dialogs = await primary.list_group_dialogs()
@@ -837,6 +1134,7 @@ class GroupChatEngine:
                 self._refresh_runtime_settings()
                 session = self.state.group_session or session
                 session = self._apply_runtime_session(session)
+                session = await self._refresh_account_presence(session, primary)
                 self._ensure_day_counters(session)
 
                 now_mono = asyncio.get_event_loop().time()
@@ -845,6 +1143,7 @@ class GroupChatEngine:
                     last_sync = now_mono
                     session = self.state.group_session or session
                     session = self._apply_runtime_session(session)
+                    session = await self._refresh_account_presence(session, primary)
                     if self._stop.is_set():
                         break
 
@@ -900,9 +1199,20 @@ class GroupChatEngine:
                     quoted_text = str(payload.get("quoted_text") or "").strip()
                     human_name = str(payload.get("speaker_name") or "участник")
                     human_text = str(payload.get("text") or "").strip()
-                    context_parts = []
-                    if session.extra_context:
-                        context_parts.append(session.extra_context)
+                    resume_limit = max(
+                        self.settings.history_limit,
+                        self.settings.reconnect_history_limit,
+                    )
+                    transcript_limit = (
+                        resume_limit if self._account_resume_pending.get(speaker) else None
+                    )
+                    context_parts = [
+                        self._compose_speaker_context(
+                            session,
+                            speaker,
+                            session.extra_context,
+                        )
+                    ]
                     context_parts.append(
                         "В чате живой участник обратился к одному из ваших аккаунтов. "
                         "Нужен один естественный ответ от имени текущего спикера."
@@ -927,6 +1237,7 @@ class GroupChatEngine:
                             speaker,
                             True,
                             "\n".join(part for part in context_parts if part),
+                            transcript_limit=transcript_limit,
                         )
                     except Exception as exc:
                         self.log(f"❌ LLM {speaker} (ответ живому): {exc}")
@@ -984,9 +1295,9 @@ class GroupChatEngine:
 
                 speaker = self._pick_speaker(session)
                 if not speaker:
-                    self.stats.status_text = "квоты исчерпаны"
+                    self.stats.status_text = "нет доступных участников"
                     self._emit()
-                    self.log("■ Квоты сообщений исчерпаны")
+                    self.log("■ Сейчас нет доступных участников")
                     break
 
                 client = self._clients.get(speaker)
@@ -1012,12 +1323,31 @@ class GroupChatEngine:
                 self.stats.status_text = f"{speaker}: генерирует..."
                 self._emit()
                 try:
+                    resume_limit = max(
+                        self.settings.history_limit,
+                        self.settings.reconnect_history_limit,
+                    )
+                    transcript_limit = (
+                        resume_limit if self._account_resume_pending.get(speaker) else None
+                    )
+                    speaker_context = self._compose_speaker_context(
+                        session,
+                        speaker,
+                        session.extra_context,
+                    )
+                    reply_target = self._pick_reply_target(session, speaker)
+                    reply_context = self._reply_target_context(session, reply_target)
+                    if reply_context:
+                        speaker_context = "\n".join(
+                            part for part in (speaker_context, reply_context) if part
+                        )
                     text = await self._generate_unique_group_message(
                         llm,
                         session,
                         speaker,
                         short,
-                        session.extra_context,
+                        speaker_context,
+                        transcript_limit=transcript_limit,
                     )
                 except Exception as exc:
                     self.log(f"❌ LLM {speaker}: {exc}")
@@ -1034,12 +1364,25 @@ class GroupChatEngine:
                     max(self.settings.burst_min, self.settings.burst_max),
                 )
                 parts = parts[:burst_limit]
+                reply_to_msg_id = None
+                reply_to_speaker_account_id = ""
+                reply_to_external = False
+                if reply_target:
+                    reply_msg_id = int(reply_target.get("msg_id") or 0)
+                    reply_to_msg_id = reply_msg_id or None
+                    reply_to_speaker_account_id = str(
+                        reply_target.get("speaker_account_id") or ""
+                    )
+                    reply_to_external = bool(reply_target.get("external", False))
 
                 session, _sent = await self._send_generated_parts(
                     session,
                     speaker,
                     client,
                     parts,
+                    reply_to_msg_id=reply_to_msg_id,
+                    reply_to_speaker_account_id=reply_to_speaker_account_id,
+                    reply_to_external=reply_to_external,
                 )
 
                 between = random.uniform(

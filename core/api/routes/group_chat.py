@@ -57,6 +57,8 @@ def register(app: FastAPI, service: AppService) -> None:
             topic=body.topic,
             role_overrides=overrides,
             activity_weights=body.activity_weights or {},
+            account_schedules=body.account_schedules or {},
+            friendships=body.friendships or {},
             extra_context=body.extra_context,
             chat_title=body.chat_title,
         )
@@ -76,6 +78,8 @@ def register(app: FastAPI, service: AppService) -> None:
             topic=body.topic,
             role_overrides=overrides,
             activity_weights=body.activity_weights or {},
+            account_schedules=body.account_schedules or {},
+            friendships=body.friendships or {},
             extra_context=body.extra_context,
             chat_title=body.chat_title,
         )
