@@ -6,6 +6,7 @@ from enum import Enum
 from pathlib import Path
 
 _IMPORT_DUP_SUFFIX = re.compile(r"^(.+)_(\d+)$")
+_SESSION_SKIP_SUFFIXES = (".session-journal",)
 
 
 class SessionFormat(str, Enum):
@@ -31,8 +32,13 @@ def discover_sessions(sessions_dir: Path) -> list[SessionInfo]:
 
     found: dict[str, SessionInfo] = {}
 
-    for item in sessions_dir.iterdir():
-        if item.name.startswith("."):
+    try:
+        entries = list(sessions_dir.iterdir())
+    except OSError:
+        return []
+
+    for item in entries:
+        if _should_skip_session_entry(item):
             continue
         if item.is_file() and item.suffix == ".session":
             account_id = item.stem
@@ -40,13 +46,19 @@ def discover_sessions(sessions_dir: Path) -> list[SessionInfo]:
         elif item.is_dir():
             if _is_tdata_folder(item):
                 found[item.name] = SessionInfo(item.name, item, SessionFormat.TDATA)
-        else:
-            for child in item.iterdir():
-                if child.is_file() and child.suffix == ".session":
-                    account_id = child.stem
-                    found[account_id] = SessionInfo(account_id, child, SessionFormat.TELEthon)
-                elif child.is_dir() and _is_tdata_folder(child):
-                    found[item.name] = SessionInfo(item.name, child, SessionFormat.TDATA)
+            else:
+                try:
+                    children = list(item.iterdir())
+                except OSError:
+                    continue
+                for child in children:
+                    if _should_skip_session_entry(child):
+                        continue
+                    if child.is_file() and child.suffix == ".session":
+                        account_id = child.stem
+                        found[account_id] = SessionInfo(account_id, child, SessionFormat.TELEthon)
+                    elif child.is_dir() and _is_tdata_folder(child):
+                        found[item.name] = SessionInfo(item.name, child, SessionFormat.TDATA)
 
     return sorted(found.values(), key=lambda s: s.account_id.lower())
 
@@ -94,6 +106,11 @@ def _is_tdata_folder(path: Path) -> bool:
     if path.name.lower() == "tdata":
         return (path / "key_datas").exists() or any(path.glob("D877F783D5D3EF8C*"))
     return (path / "tdata" / "key_datas").exists() or any(path.glob("**/key_datas"))
+
+
+def _should_skip_session_entry(path: Path) -> bool:
+    name = path.name.lower()
+    return name.startswith(".") or any(name.endswith(suffix) for suffix in _SESSION_SKIP_SUFFIXES)
 
 
 def import_duplicate_base_id(account_id: str) -> str | None:
