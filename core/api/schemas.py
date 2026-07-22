@@ -181,6 +181,7 @@ class GroupChatStartBody(BaseModel):
     chat_title: str = ""
     topic: str = ""
     extra_context: str = ""
+    reset_context_on_apply: bool = False
     role_overrides: dict[str, GroupChatRoleOverride] = {}
     activity_weights: dict[str, float] = {}
     account_schedules: dict[str, list[dict]] = {}

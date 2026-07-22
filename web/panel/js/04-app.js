@@ -1917,6 +1917,12 @@ const GROUP_CHAT_PRESETS = {
 let groupChatPreset = "natural";
 let groupChatWeightOverrides = new Map();
 let groupChatRoleDrafts = new Map();
+let groupChatServerRoleDrafts = new Map();
+
+P.groupChatRoleDraftEquals = function(left, right) {
+  return (left?.role_name || "") === (right?.role_name || "")
+    && (left?.role_prompt || "") === (right?.role_prompt || "");
+}
 
 P.groupChatEligibleAccounts = function() {
   return (P.state.accountsCache || []).filter((a) => a.is_active !== false);
@@ -1975,6 +1981,11 @@ P.clearGroupChatScene = function() {
     extra.value = "";
     delete extra.dataset.touched;
   }
+  const resetToggle = P.$("#groupChatResetContextOnApply");
+  if (resetToggle) {
+    resetToggle.checked = false;
+    delete resetToggle.dataset.touched;
+  }
   const select = P.$("#groupChatSelect");
   if (select) {
     if (!Array.from(select.options).some((option) => option.value === "")) {
@@ -1986,6 +1997,7 @@ P.clearGroupChatScene = function() {
     select.value = "";
   }
   groupChatRoleDrafts = new Map();
+  groupChatServerRoleDrafts = new Map();
   P.renderGroupChatRoleOverrides();
   P.renderGroupChatVenuePreview();
   P.$("#groupChatMsg").textContent = "Сцена очищена: тема, контекст и площадка сброшены.";
@@ -2242,13 +2254,25 @@ P.syncGroupChatFromStatus = function(st) {
   if ((!P.$("#groupChatExtra").value || !P.$("#groupChatExtra").dataset.touched) && st.extra_context) {
     P.$("#groupChatExtra").value = st.extra_context;
   }
+  const resetToggle = P.$("#groupChatResetContextOnApply");
+  if (resetToggle && !resetToggle.dataset.touched) {
+    resetToggle.checked = !!st.reset_context_on_apply;
+  }
   if (Array.isArray(st.participants)) {
     st.participants.forEach((item) => {
       if (item.weight != null) groupChatWeightOverrides.set(item.account_id, item.weight);
-      groupChatRoleDrafts.set(item.account_id, {
+      const nextDraft = {
         role_name: item.role_name || P.state.roleAssignments[item.account_id] || "",
         role_prompt: item.role_prompt || "",
-      });
+      };
+      const currentDraft = groupChatRoleDrafts.get(item.account_id);
+      const previousServerDraft = groupChatServerRoleDrafts.get(item.account_id);
+      const canSyncDraft =
+        !currentDraft || P.groupChatRoleDraftEquals(currentDraft, previousServerDraft);
+      groupChatServerRoleDrafts.set(item.account_id, nextDraft);
+      if (canSyncDraft) {
+        groupChatRoleDrafts.set(item.account_id, nextDraft);
+      }
     });
   }
   if (Array.isArray(st.account_ids) && st.account_ids.length && !P.state.selectedGroupChatAccounts.size) {
@@ -2316,6 +2340,7 @@ P.buildGroupChatScenePayload = function() {
     chat_title: chat?.title || "",
     topic,
     extra_context: P.$("#groupChatExtra").value,
+    reset_context_on_apply: !!P.$("#groupChatResetContextOnApply")?.checked,
     role_overrides,
     activity_weights,
   };
@@ -2562,6 +2587,12 @@ P.$$(".gc-preset").forEach((btn) => {
     el.dataset.touched = "1";
   });
 });
+const groupChatResetContextOnApply = P.$("#groupChatResetContextOnApply");
+if (groupChatResetContextOnApply) {
+  groupChatResetContextOnApply.addEventListener("change", () => {
+    groupChatResetContextOnApply.dataset.touched = "1";
+  });
+}
 
 P.startEngine = async function(resumeOnly) {
   try {

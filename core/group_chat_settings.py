@@ -80,6 +80,9 @@ class GroupChatSettings:
     dedupe_recent_messages_window: int = 16
     dedupe_similarity_threshold: float = 0.9
     dedupe_retry_attempts: int = 3
+    theme_fatigue_window: int = 20
+    theme_fatigue_token_repeat: int = 3
+    theme_fatigue_phrase_repeat: int = 2
 
     # Контент / LLM
     language: str = "ru"
@@ -142,6 +145,9 @@ class GroupChatSettings:
             "dedupe_recent_messages_window": self.dedupe_recent_messages_window,
             "dedupe_similarity_threshold": self.dedupe_similarity_threshold,
             "dedupe_retry_attempts": self.dedupe_retry_attempts,
+            "theme_fatigue_window": self.theme_fatigue_window,
+            "theme_fatigue_token_repeat": self.theme_fatigue_token_repeat,
+            "theme_fatigue_phrase_repeat": self.theme_fatigue_phrase_repeat,
             "language": self.language,
             "history_limit": self.history_limit,
             "reconnect_history_limit": self.reconnect_history_limit,
@@ -201,6 +207,9 @@ class GroupChatSettings:
             dedupe_recent_messages_window=int(data.get("dedupe_recent_messages_window", 16)),
             dedupe_similarity_threshold=float(data.get("dedupe_similarity_threshold", 0.9)),
             dedupe_retry_attempts=int(data.get("dedupe_retry_attempts", 3)),
+            theme_fatigue_window=int(data.get("theme_fatigue_window", 20)),
+            theme_fatigue_token_repeat=int(data.get("theme_fatigue_token_repeat", 3)),
+            theme_fatigue_phrase_repeat=int(data.get("theme_fatigue_phrase_repeat", 2)),
             language=str(data.get("language", "ru")),
             history_limit=int(data.get("history_limit", 40)),
             reconnect_history_limit=int(data.get("reconnect_history_limit", 50)),

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 import random
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from telethon.errors import FloodWaitError
 
@@ -55,6 +56,40 @@ def _parse_hhmm(value: str) -> tuple[int, int]:
 class GroupChatEngine:
     """Оркестратор живой переписки своих аккаунтов в общем чате."""
 
+    _LOW_SIGNAL_TOKENS = {
+        "вообще",
+        "вроде",
+        "всякое",
+        "грязи",
+        "грязь",
+        "just",
+        "really",
+        "that",
+        "this",
+        "very",
+        "когда",
+        "клей",
+        "который",
+        "которая",
+        "которые",
+        "нужно",
+        "опять",
+        "просто",
+        "прям",
+        "снова",
+        "такой",
+        "такая",
+        "такие",
+        "тоже",
+        "только",
+        "эта",
+        "это",
+        "этого",
+        "этой",
+        "этому",
+        "этот",
+    }
+
     def __init__(
         self,
         config: AppConfig,
@@ -84,6 +119,8 @@ class GroupChatEngine:
         self._account_online: dict[str, bool] = {}
         self._account_resume_pending: dict[str, bool] = {}
         self._friendships: dict[str, set[str]] = {}
+        self._scene_revision_seen: int = 0
+        self._history_refresh_required: bool = False
 
     def stop(self) -> None:
         self._stop.set()
@@ -105,19 +142,31 @@ class GroupChatEngine:
 
     def _apply_runtime_session(self, session: GroupSessionRecord) -> GroupSessionRecord:
         chat_switched = self._active_chat_id and self._active_chat_id != int(session.chat_id)
-        if chat_switched:
-            self.log(
-                f"↻ Переключаем сцену на чат "
-                f"{session.chat_title or session.chat_id} / {session.topic or '—'}"
-            )
+        scene_reset_requested = (
+            self._scene_revision_seen > 0
+            and int(session.scene_revision or 0) != self._scene_revision_seen
+            and bool(session.reset_context_on_apply)
+        )
+        if chat_switched or scene_reset_requested:
+            if chat_switched:
+                self.log(
+                    f"↻ Переключаем сцену на чат "
+                    f"{session.chat_title or session.chat_id} / {session.topic or '—'}"
+                )
+            else:
+                self.log("↻ Сцена обновлена: сбрасываем память и перечитываем свежую историю")
             self._known_msg_ids = set()
             self._pending_external_replies = []
             self._handled_external_msg_ids = set()
             self._next_external_reply_after = 0.0
             self._last_speakers = []
             self._in_quiet_until = 0.0
+            self._history_refresh_required = True
+        elif self._active_chat_id == 0:
+            self._history_refresh_required = True
 
         self._active_chat_id = int(session.chat_id)
+        self._scene_revision_seen = int(session.scene_revision or 0)
         self._friendships = self._normalize_session_friendships(session)
         self._account_online = {
             account_id: self._account_online.get(account_id, True)
@@ -228,6 +277,7 @@ class GroupChatEngine:
         session: GroupSessionRecord,
         speaker: str,
         base_context: str = "",
+        reply_target: dict[str, Any] | None = None,
     ) -> str:
         parts: list[str] = []
         if base_context.strip():
@@ -235,6 +285,9 @@ class GroupChatEngine:
         friend_context = self._speaker_friend_context(session, speaker)
         if friend_context:
             parts.append(friend_context)
+        theme_context = self._theme_fatigue_context(session, reply_target=reply_target)
+        if theme_context:
+            parts.append(theme_context)
         if self._account_resume_pending.get(speaker):
             limit = max(self.settings.history_limit, self.settings.reconnect_history_limit)
             parts.append(self._resume_context(limit))
@@ -294,15 +347,173 @@ class GroupChatEngine:
             return preview
         return preview[: limit - 1].rstrip() + "…"
 
+    def _analysis_history_limit(self) -> int:
+        return max(
+            1,
+            int(
+                max(
+                    self.settings.history_limit,
+                    self.settings.reconnect_history_limit,
+                    self.settings.dedupe_recent_messages_window,
+                    self.settings.theme_fatigue_window,
+                )
+            ),
+        )
+
+    def _recent_messages_for_analysis(
+        self,
+        session: GroupSessionRecord,
+        limit: int | None = None,
+    ) -> list[Any]:
+        history_limit = max(1, int(limit or self._analysis_history_limit()))
+        return session.messages[-history_limit:]
+
+    def _thread_root_id(
+        self,
+        session: GroupSessionRecord,
+        message_or_id: Any,
+        cache: dict[int, int] | None = None,
+    ) -> int:
+        msg_id = int(getattr(message_or_id, "msg_id", message_or_id) or 0)
+        if not msg_id:
+            return 0
+        if cache is not None and msg_id in cache:
+            return cache[msg_id]
+
+        visited: set[int] = set()
+        current = self._find_message_record_by_id(session, msg_id)
+        root_id = msg_id
+        while current is not None:
+            parent_id = int(current.reply_to_msg_id or 0)
+            if not parent_id or parent_id in visited:
+                break
+            visited.add(root_id)
+            root_id = parent_id
+            current = self._find_message_record_by_id(session, parent_id)
+
+        if cache is not None:
+            cache[msg_id] = root_id
+            for visited_id in visited:
+                cache[visited_id] = root_id
+        return root_id
+
+    def _theme_fatigue_markers(
+        self,
+        messages: Sequence[Any],
+    ) -> tuple[list[str], list[str]]:
+        token_counts: Counter[str] = Counter()
+        phrase_counts: Counter[str] = Counter()
+        for message in messages:
+            token_counts.update(self._content_tokens(message.text))
+            phrase_counts.update(self._phrase_ngrams(self._message_tokens(message.text), 2))
+
+        hot_tokens = [
+            token
+            for token, count in token_counts.most_common()
+            if count >= max(2, int(self.settings.theme_fatigue_token_repeat or 0))
+        ][:6]
+        hot_phrases = [
+            phrase
+            for phrase, count in phrase_counts.most_common()
+            if count >= max(2, int(self.settings.theme_fatigue_phrase_repeat or 0))
+        ][:4]
+        return hot_tokens, hot_phrases
+
+    def _theme_fatigue_context(
+        self,
+        session: GroupSessionRecord,
+        reply_target: dict[str, Any] | None = None,
+    ) -> str:
+        messages = self._recent_messages_for_analysis(
+            session,
+            limit=max(
+                int(self.settings.theme_fatigue_window or 0),
+                int(self.settings.dedupe_recent_messages_window or 0),
+            ),
+        )
+        if len(messages) < 4:
+            return ""
+
+        hot_tokens, hot_phrases = self._theme_fatigue_markers(messages)
+        if not hot_tokens and not hot_phrases:
+            return ""
+
+        parts = ["В последних сообщениях уже начали повторяться одни и те же мотивы."]
+        if hot_phrases:
+            parts.append("Не возвращайся к оборотам и образам: " + ", ".join(hot_phrases))
+        if hot_tokens:
+            parts.append("Не крутись вокруг одних и тех же смысловых опор: " + ", ".join(hot_tokens))
+        if reply_target and reply_target.get("speaker_name"):
+            parts.append(
+                f"Если отвечаешь {reply_target.get('speaker_name')}, не перефразируй уже сказанное в этой ветке; сдвинь разговор дальше."
+            )
+        else:
+            parts.append("Сдвинь разговор дальше: новый факт, вопрос, контраргумент, уточнение или смена фокуса.")
+        return "\n".join(parts)
+
+    def _find_stale_theme_duplicate(
+        self,
+        session: GroupSessionRecord,
+        text: str,
+    ) -> dict[str, Any] | None:
+        messages = self._recent_messages_for_analysis(
+            session,
+            limit=max(
+                int(self.settings.theme_fatigue_window or 0),
+                int(self.settings.dedupe_recent_messages_window or 0),
+            ),
+        )
+        if len(messages) < 4:
+            return None
+
+        hot_tokens, hot_phrases = self._theme_fatigue_markers(messages)
+        candidate_tokens = self._content_tokens(text)
+        candidate_phrases = self._phrase_ngrams(self._message_tokens(text), 2)
+        shared_tokens = sorted(candidate_tokens & set(hot_tokens))
+        shared_phrases = sorted(candidate_phrases & set(hot_phrases))
+        token_ratio = len(shared_tokens) / max(1, len(candidate_tokens))
+        phrase_ratio = len(shared_phrases) / max(1, len(candidate_phrases)) if candidate_phrases else 0.0
+        if not shared_phrases and (len(shared_tokens) < 2 or token_ratio < 0.6):
+            return None
+
+        anchor = next(
+            (
+                message
+                for message in reversed(messages)
+                if (self._content_tokens(message.text) & set(shared_tokens))
+                or (self._phrase_ngrams(self._message_tokens(message.text), 2) & set(shared_phrases))
+            ),
+            messages[-1],
+        )
+        return {
+            "message": anchor,
+            "reason": "stale_theme",
+            "similarity": max(token_ratio, phrase_ratio),
+            "shared_tokens": shared_tokens,
+            "shared_phrase": shared_phrases[0] if shared_phrases else "",
+        }
+
+    def _duplicate_reason_label(self, duplicate: dict[str, Any]) -> str:
+        reason = str(duplicate.get("reason") or "")
+        similarity = float(duplicate.get("similarity") or 0.0)
+        if reason == "similar":
+            return f"слишком похоже ({similarity:.2f})"
+        if reason == "stale_theme":
+            return "заезженный мотив/тезис"
+        if reason in {"phrase", "phrase_overlap"}:
+            phrase = str(duplicate.get("shared_phrase") or "").strip()
+            return f"повтор образа/оборота: {phrase}" if phrase else "повтор образа/оборота"
+        if reason == "content":
+            return "слишком близкий набор смысловых слов"
+        return "дословный повтор"
+
     def _count_direct_replies(self, session: GroupSessionRecord, msg_id: int) -> int:
         if not msg_id:
             return 0
         return sum(1 for message in session.messages if int(message.reply_to_msg_id or 0) == int(msg_id))
 
     def _pick_reply_target(self, session: GroupSessionRecord, speaker: str) -> dict[str, Any] | None:
-        recent_messages = session.messages[
-            -max(self.settings.history_limit, self.settings.reconnect_history_limit) :
-        ]
+        recent_messages = self._recent_messages_for_analysis(session)
         if not recent_messages:
             return None
 
@@ -312,6 +523,18 @@ class GroupChatEngine:
             if message.speaker_account_id == speaker and message.reply_to_msg_id
         }
         friend_ids = self._friendships.get(speaker, set())
+        thread_cache: dict[int, int] = {}
+        thread_sizes: Counter[int] = Counter()
+        interaction_counts: Counter[tuple[str, str]] = Counter()
+        speaker_recent_counts: Counter[str] = Counter()
+        for message in recent_messages:
+            msg_id = int(message.msg_id or 0)
+            if msg_id:
+                thread_sizes[self._thread_root_id(session, msg_id, cache=thread_cache)] += 1
+            if message.speaker_account_id:
+                speaker_recent_counts[message.speaker_account_id] += 1
+            if message.reply_to_speaker_account_id and message.speaker_account_id:
+                interaction_counts[(message.speaker_account_id, message.reply_to_speaker_account_id)] += 1
 
         best_score = float("-inf")
         best_message: Any | None = None
@@ -333,7 +556,13 @@ class GroupChatEngine:
                 score -= 16.0
 
             direct_replies = self._count_direct_replies(session, msg_id)
+            if direct_replies == 0:
+                score += 4.0
             score -= min(direct_replies, 4) * 2.5
+            root_id = self._thread_root_id(session, msg_id, cache=thread_cache)
+            score -= max(0, thread_sizes.get(root_id, 0) - 2) * 1.8
+            score -= interaction_counts.get((speaker, message.speaker_account_id), 0) * 4.0
+            score -= max(0, speaker_recent_counts.get(message.speaker_account_id, 0) - 2) * 1.2
 
             if score > best_score:
                 best_score = score
@@ -456,7 +685,8 @@ class GroupChatEngine:
         return {
             token
             for token in cls._message_tokens(text)
-            if len(token) >= 4 or any(ch.isdigit() for ch in token)
+            if (len(token) >= 4 or any(ch.isdigit() for ch in token))
+            and token not in cls._LOW_SIGNAL_TOKENS
         }
 
     @staticmethod
@@ -534,7 +764,44 @@ class GroupChatEngine:
                         / max(1, min(len(candidate_bigrams), len(existing_bigrams))),
                         "shared_phrase": sorted(shared_bigrams)[0],
                     }
+        stale_theme = self._find_stale_theme_duplicate(session, text)
+        if stale_theme:
+            return stale_theme
         return None
+
+    def _build_retry_context_v2(
+        self,
+        session: GroupSessionRecord,
+        duplicate: dict[str, Any] | None,
+        base_context: str = "",
+    ) -> str:
+        parts: list[str] = []
+        if base_context.strip():
+            parts.append(base_context.strip())
+        if not duplicate:
+            return "\n".join(parts)
+
+        message = duplicate["message"]
+        quoted = (message.text or "").strip().replace("\n", " ")
+        quoted = quoted[:220]
+        speaker_name = message.speaker_name or message.speaker_account_id or "participant"
+        if session.topic.strip():
+            parts.append(f"Stay on the chat topic: {session.topic.strip()}")
+        parts.append(f"Anti-repeat retry: do not reuse the recent line from {speaker_name}: {quoted}")
+        if duplicate.get("shared_phrase"):
+            parts.append(f"Do not repeat this phrase or analogy: {duplicate['shared_phrase']}")
+        if duplicate.get("shared_tokens"):
+            tokens = ", ".join(str(token) for token in duplicate["shared_tokens"][:6])
+            parts.append(f"Do not keep the same semantic anchors: {tokens}")
+        if duplicate.get("reason") == "stale_theme":
+            parts.append("This thesis is already exhausted in the chat. Change direction, not just wording.")
+        parts.append(
+            "Do not repeat the same thesis, comparison, joke, or conclusion even in different words."
+        )
+        parts.append(
+            "Write the next reply from a new angle: another argument, question, clarification, example, or focus."
+        )
+        return "\n".join(parts)
 
     def _anti_repeat_context(
         self,
@@ -634,7 +901,7 @@ class GroupChatEngine:
                     f"■ {self._display_names.get(speaker, speaker)}: реплика отброшена антидублем"
                 )
                 return ""
-            retry_context = self._build_retry_context(session, duplicate, extra_context)
+            retry_context = self._build_retry_context_v2(session, duplicate, extra_context)
 
         return ""
 
@@ -995,6 +1262,7 @@ class GroupChatEngine:
         activity_weights: dict[str, float] | None = None,
         account_schedules: dict[str, list[dict[str, Any]]] | None = None,
         friendships: dict[str, list[str]] | None = None,
+        reset_context_on_apply: bool = False,
         extra_context: str = "",
         chat_title: str = "",
     ) -> None:
@@ -1007,6 +1275,8 @@ class GroupChatEngine:
         self._account_online = {}
         self._account_resume_pending = {}
         self._friendships = {}
+        self._scene_revision_seen = 0
+        self._history_refresh_required = False
         roles = RolesConfig.load(self.base_dir / self.config.roles_file)
         role_overrides = role_overrides or {}
         activity_weights = activity_weights or {}
@@ -1057,6 +1327,8 @@ class GroupChatEngine:
             activity_weights=weights,
             account_schedules=account_schedules,
             friendships=friendships,
+            reset_context_on_apply=bool(reset_context_on_apply),
+            scene_revision=1,
             extra_context=extra_context.strip(),
             status="active",
             session_counts={a: 0 for a in account_ids},
@@ -1138,6 +1410,19 @@ class GroupChatEngine:
                 self._ensure_day_counters(session)
 
                 now_mono = asyncio.get_event_loop().time()
+                if self._history_refresh_required:
+                    history_limit = max(
+                        int(self.settings.history_limit),
+                        int(self.settings.reconnect_history_limit),
+                    )
+                    await self._sync_history(session, primary, limit=history_limit)
+                    self._history_refresh_required = False
+                    last_sync = now_mono
+                    session = self.state.group_session or session
+                    session = self._apply_runtime_session(session)
+                    session = await self._refresh_account_presence(session, primary)
+                    if self._stop.is_set():
+                        break
                 if now_mono - last_sync >= self.settings.sync_history_every_sec:
                     await self._sync_history(session, primary)
                     last_sync = now_mono
@@ -1330,12 +1615,13 @@ class GroupChatEngine:
                     transcript_limit = (
                         resume_limit if self._account_resume_pending.get(speaker) else None
                     )
+                    reply_target = self._pick_reply_target(session, speaker)
                     speaker_context = self._compose_speaker_context(
                         session,
                         speaker,
                         session.extra_context,
+                        reply_target=reply_target,
                     )
-                    reply_target = self._pick_reply_target(session, speaker)
                     reply_context = self._reply_target_context(session, reply_target)
                     if reply_context:
                         speaker_context = "\n".join(

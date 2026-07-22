@@ -238,6 +238,8 @@ class GroupSessionRecord:
     day_counts: dict[str, int] = field(default_factory=dict)
     day_key: str = ""
     group_day_count: int = 0
+    reset_context_on_apply: bool = False
+    scene_revision: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -265,6 +267,8 @@ class GroupSessionRecord:
             "day_counts": dict(self.day_counts),
             "day_key": self.day_key,
             "group_day_count": self.group_day_count,
+            "reset_context_on_apply": self.reset_context_on_apply,
+            "scene_revision": self.scene_revision,
         }
 
     @classmethod
@@ -298,6 +302,8 @@ class GroupSessionRecord:
             day_counts={str(k): int(v) for k, v in (data.get("day_counts") or {}).items()},
             day_key=str(data.get("day_key", "")),
             group_day_count=int(data.get("group_day_count", 0)),
+            reset_context_on_apply=bool(data.get("reset_context_on_apply", False)),
+            scene_revision=int(data.get("scene_revision", 0)),
         )
 
 

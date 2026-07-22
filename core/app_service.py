@@ -175,7 +175,11 @@ class AppService:
         self.roles = RolesConfig.load(self.roles_path)
         return self.roles.role_name_for_account(account_id)
 
-    def sync_roles_to_state(self, roles: RolesConfig | None = None) -> None:
+    def sync_roles_to_state(
+        self,
+        roles: RolesConfig | None = None,
+        previous_roles: RolesConfig | None = None,
+    ) -> None:
         """Синхронизировать роли из roles.json в state.json (аккаунты и диалоги рассылки)."""
         roles = roles or RolesConfig.load(self.roles_path)
         self.state_store.load()
@@ -194,6 +198,34 @@ class AppService:
                 continue
             dialog.role_prompt = roles.prompt_for_account(dialog.account_id)
             self.state_store.upsert_dialog(dialog)
+
+        session = self.state_store.group_session
+        if session:
+            session_changed = False
+            for account_id in session.account_ids:
+                next_prompt = roles.prompt_for_account(account_id)
+                next_name = roles.role_name_for_account(account_id) or "участник"
+                current_prompt = str(session.role_prompts.get(account_id) or "")
+                current_name = str(session.role_names.get(account_id) or "") or "участник"
+
+                if previous_roles is None:
+                    should_update_prompt = True
+                    should_update_name = True
+                else:
+                    prev_prompt = previous_roles.prompt_for_account(account_id)
+                    prev_name = previous_roles.role_name_for_account(account_id) or "участник"
+                    should_update_prompt = not current_prompt or current_prompt == prev_prompt
+                    should_update_name = not current_name or current_name == prev_name
+
+                if should_update_prompt and current_prompt != next_prompt:
+                    session.role_prompts[account_id] = next_prompt
+                    session_changed = True
+                if should_update_name and current_name != next_name:
+                    session.role_names[account_id] = next_name
+                    session_changed = True
+
+            if session_changed:
+                self.state_store.upsert_group_session(session)
 
         self.state_store.save()
 
@@ -803,7 +835,7 @@ class AppService:
         self.roles.sync_group_accounts_from_assignments()
         self.roles.save(self.roles_path)
         master.save(self.master_prompt_path)
-        self.sync_roles_to_state(self.roles)
+        self.sync_roles_to_state(self.roles, previous_roles=existing)
 
     def get_dialogs(self) -> list[dict[str, Any]]:
         self.state_store.load()
@@ -1365,6 +1397,8 @@ class AppService:
             "extra_context": session.extra_context if session else "",
             "account_schedules": schedules,
             "friendships": friendships,
+            "reset_context_on_apply": session.reset_context_on_apply if session else False,
+            "scene_revision": session.scene_revision if session else 0,
             "created_at": session.created_at if session else "",
             "last_activity": session.last_activity if session else "",
             "stored_status": session.status if session else ("running" if self._group_chat_running else "idle"),
@@ -1381,6 +1415,7 @@ class AppService:
         account_schedules: dict[str, list[dict[str, Any]]] | None = None,
         friendships: dict[str, list[str]] | None = None,
         extra_context: str = "",
+        reset_context_on_apply: bool = False,
         chat_title: str = "",
     ) -> tuple[bool, str]:
         with self._lock:
@@ -1451,6 +1486,7 @@ class AppService:
                         account_schedules=normalized_schedules,
                         friendships=normalized_friendships,
                         extra_context=extra_context,
+                        reset_context_on_apply=bool(reset_context_on_apply),
                         chat_title=chat_title,
                     )
                 )
@@ -1476,6 +1512,7 @@ class AppService:
         account_schedules: dict[str, list[dict[str, Any]]] | None = None,
         friendships: dict[str, list[str]] | None = None,
         extra_context: str = "",
+        reset_context_on_apply: bool = False,
         chat_title: str = "",
     ) -> tuple[bool, str]:
         with self._lock:
@@ -1529,6 +1566,8 @@ class AppService:
                 weights[aid] = float(weights_input.get(aid, 1.0) or 1.0)
 
             current = self.state_store.group_session
+            should_reset_context = bool(reset_context_on_apply)
+            next_scene_revision = (current.scene_revision if current else 0) + 1
             session = GroupSessionRecord(
                 chat_id=int(chat_id),
                 topic=topic.strip(),
@@ -1542,8 +1581,8 @@ class AppService:
                 extra_context=extra_context.strip(),
                 status="active",
                 created_at=current.created_at if current else "",
-                last_activity=current.last_activity if current else "",
-                messages=list(current.messages) if current else [],
+                last_activity="" if should_reset_context else (current.last_activity if current else ""),
+                messages=[] if should_reset_context else (list(current.messages) if current else []),
                 session_counts={
                     aid: (current.session_counts.get(aid, 0) if current else 0)
                     for aid in account_ids
@@ -1554,6 +1593,8 @@ class AppService:
                 },
                 day_key=current.day_key if current else "",
                 group_day_count=current.group_day_count if current else 0,
+                reset_context_on_apply=should_reset_context,
+                scene_revision=next_scene_revision,
             )
             self.state_store.upsert_group_session(session)
             self._group_chat_account_ids = requested_ids

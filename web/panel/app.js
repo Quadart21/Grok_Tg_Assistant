@@ -1901,6 +1901,12 @@ const GROUP_CHAT_PRESETS = {
 let groupChatPreset = "natural";
 let groupChatWeightOverrides = new Map();
 let groupChatRoleDrafts = new Map();
+let groupChatServerRoleDrafts = new Map();
+
+function groupChatRoleDraftEquals(left, right) {
+  return (left?.role_name || "") === (right?.role_name || "")
+    && (left?.role_prompt || "") === (right?.role_prompt || "");
+}
 
 function groupChatEligibleAccounts() {
   return (accountsCache || []).filter((a) => a.is_active !== false);
@@ -1959,6 +1965,11 @@ function clearGroupChatScene() {
     extra.value = "";
     delete extra.dataset.touched;
   }
+  const resetToggle = $("#groupChatResetContextOnApply");
+  if (resetToggle) {
+    resetToggle.checked = false;
+    delete resetToggle.dataset.touched;
+  }
   const select = $("#groupChatSelect");
   if (select) {
     if (!Array.from(select.options).some((option) => option.value === "")) {
@@ -1970,6 +1981,7 @@ function clearGroupChatScene() {
     select.value = "";
   }
   groupChatRoleDrafts = new Map();
+  groupChatServerRoleDrafts = new Map();
   renderGroupChatRoleOverrides();
   renderGroupChatVenuePreview();
   $("#groupChatMsg").textContent = "Сцена очищена: тема, контекст и площадка сброшены.";
@@ -2226,13 +2238,25 @@ function syncGroupChatFromStatus(st) {
   if ((!$("#groupChatExtra").value || !$("#groupChatExtra").dataset.touched) && st.extra_context) {
     $("#groupChatExtra").value = st.extra_context;
   }
+  const resetToggle = $("#groupChatResetContextOnApply");
+  if (resetToggle && !resetToggle.dataset.touched) {
+    resetToggle.checked = !!st.reset_context_on_apply;
+  }
   if (Array.isArray(st.participants)) {
     st.participants.forEach((item) => {
       if (item.weight != null) groupChatWeightOverrides.set(item.account_id, item.weight);
-      groupChatRoleDrafts.set(item.account_id, {
+      const nextDraft = {
         role_name: item.role_name || roleAssignments[item.account_id] || "",
         role_prompt: item.role_prompt || "",
-      });
+      };
+      const currentDraft = groupChatRoleDrafts.get(item.account_id);
+      const previousServerDraft = groupChatServerRoleDrafts.get(item.account_id);
+      const canSyncDraft =
+        !currentDraft || groupChatRoleDraftEquals(currentDraft, previousServerDraft);
+      groupChatServerRoleDrafts.set(item.account_id, nextDraft);
+      if (canSyncDraft) {
+        groupChatRoleDrafts.set(item.account_id, nextDraft);
+      }
     });
   }
   if (Array.isArray(st.account_ids) && st.account_ids.length && !selectedGroupChatAccounts.size) {
@@ -2300,6 +2324,7 @@ function buildGroupChatScenePayload() {
     chat_title: chat?.title || "",
     topic,
     extra_context: $("#groupChatExtra").value,
+    reset_context_on_apply: !!$("#groupChatResetContextOnApply")?.checked,
     role_overrides,
     activity_weights,
   };
@@ -2546,6 +2571,12 @@ $$(".gc-preset").forEach((btn) => {
     el.dataset.touched = "1";
   });
 });
+const groupChatResetContextOnApply = $("#groupChatResetContextOnApply");
+if (groupChatResetContextOnApply) {
+  groupChatResetContextOnApply.addEventListener("change", () => {
+    groupChatResetContextOnApply.dataset.touched = "1";
+  });
+}
 
 async function startEngine(resumeOnly) {
   try {
