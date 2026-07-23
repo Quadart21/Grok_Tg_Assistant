@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from collections import deque
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -71,6 +72,9 @@ def apply_profile_template(template: str, account_id: str, index: int) -> str:
 
 
 class AppService:
+    SESSION_HEALTH_INTERVAL_SEC = 45
+    SESSION_HEALTH_CONNECT_TIMEOUT_SEC = 20
+
     def __init__(self, base_dir: Path) -> None:
         self.base_dir = base_dir
         self.config_path = base_dir / "config" / "settings.json"
@@ -100,6 +104,7 @@ class AppService:
         self._outreach_account_ids: set[str] = set()
         self._group_chat_account_ids: set[str] = set()
         self._lock = threading.Lock()
+        self._session_health_cache: dict[str, dict[str, Any]] = {}
         self._profile_scheduler_stop = threading.Event()
         self._profile_scheduler_thread = threading.Thread(
             target=self._profile_scheduler_loop,
@@ -107,6 +112,13 @@ class AppService:
             name="profile-scheduler",
         )
         self._profile_scheduler_thread.start()
+        self._session_health_stop = threading.Event()
+        self._session_health_thread = threading.Thread(
+            target=self._session_health_loop,
+            daemon=True,
+            name="session-health",
+        )
+        self._session_health_thread.start()
 
     def _load_config(self) -> AppConfig:
         if not self.config_path.exists():
@@ -384,6 +396,116 @@ class AppService:
             except Exception as exc:
                 self.log(f"⚠ Планировщик профиля: {exc}")
 
+    def _session_runtime_status(self, account_id: str) -> str | None:
+        if account_id in self._group_chat_account_ids and self._group_chat_running:
+            return "group_chat"
+        if account_id in self._outreach_account_ids and self._running:
+            return "outreach"
+        if account_id in self._running_agent_ids and self._agent_running:
+            return "agent"
+        return None
+
+    def _session_health_payload(
+        self,
+        status: str,
+        *,
+        label: str,
+        error: str = "",
+        runtime: str = "",
+    ) -> dict[str, Any]:
+        return {
+            "status": status,
+            "label": label,
+            "error": error,
+            "runtime": runtime,
+            "checked_at": self._now_utc().isoformat(),
+        }
+
+    def _get_session_health(self, account_id: str) -> dict[str, Any]:
+        cached = self._session_health_cache.get(account_id)
+        if cached:
+            return dict(cached)
+        return {
+            "status": "checking",
+            "label": "проверяется",
+            "error": "",
+            "runtime": "",
+            "checked_at": "",
+        }
+
+    async def _probe_session_health(self, session, proxies: dict[str, ProxyConfig]) -> dict[str, Any]:
+        runtime = self._session_runtime_status(session.account_id)
+        if runtime:
+            runtime_labels = {
+                "group_chat": "в работе: групповой чат",
+                "outreach": "в работе: рассылка",
+                "agent": "в работе: агент",
+            }
+            return self._session_health_payload(
+                "busy",
+                label=runtime_labels.get(runtime, "в работе"),
+                runtime=runtime,
+            )
+
+        if session.format == SessionFormat.TDATA and not has_converted_session(session):
+            return self._session_health_payload(
+                "needs_conversion",
+                label="нужна конвертация",
+            )
+
+        if not (self.config.telegram_api_id and self.config.telegram_api_hash):
+            return self._session_health_payload(
+                "unknown",
+                label="нет api id/hash",
+            )
+
+        proxy = self._proxy_for_account(session.account_id, proxies)
+        two_fa_password = read_twofa_password(session, self.config.telegram_2fa_password)
+        client = TelegramAccountClient(
+            session=session,
+            api_id=self.config.telegram_api_id,
+            api_hash=self.config.telegram_api_hash,
+            proxy=proxy,
+            two_fa_password=two_fa_password,
+        )
+        try:
+            await asyncio.wait_for(client.connect(), timeout=self.SESSION_HEALTH_CONNECT_TIMEOUT_SEC)
+            return self._session_health_payload("alive", label="жива")
+        except Exception as exc:
+            return self._session_health_payload(
+                "dead",
+                label="ошибка сессии",
+                error=format_telegram_error(exc),
+            )
+        finally:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
+    def _session_health_loop(self) -> None:
+        while not self._session_health_stop.wait(self.SESSION_HEALTH_INTERVAL_SEC):
+            try:
+                sessions = discover_sessions(self.base_dir / self.config.sessions_dir)
+                proxies = load_proxies(self.proxies_path)
+                active_ids = {session.account_id for session in sessions}
+                stale_ids = [account_id for account_id in self._session_health_cache if account_id not in active_ids]
+                for account_id in stale_ids:
+                    self._session_health_cache.pop(account_id, None)
+                for session in sessions:
+                    try:
+                        payload = asyncio.run(self._probe_session_health(session, proxies))
+                    except Exception as exc:
+                        payload = self._session_health_payload(
+                            "dead",
+                            label="ошибка проверки",
+                            error=str(exc),
+                        )
+                    self._session_health_cache[session.account_id] = payload
+                    time.sleep(0.2)
+            except Exception as exc:
+                self.log(f"⚠ Монитор сессий: {exc}")
+
     def get_logs(self, since: int = 0) -> list[str]:
         logs = list(self._logs)
         if since > 0:
@@ -493,6 +615,10 @@ class AppService:
         proxies = load_proxies(self.proxies_path)
         sessions = discover_sessions(self.base_dir / self.config.sessions_dir)
         with_proxy = sum(1 for s in sessions if self._proxy_for_account(s.account_id, proxies))
+        session_health = [self._get_session_health(s.account_id).get("status") for s in sessions]
+        alive_sessions = sum(1 for status in session_health if status == "alive")
+        dead_sessions = sum(1 for status in session_health if status == "dead")
+        busy_sessions = sum(1 for status in session_health if status == "busy")
 
         info = provider_info(self.config.llm_provider)
         return {
@@ -503,6 +629,9 @@ class AppService:
             "llm_provider_name": info.name,
             "llm_model": self.config.get_llm_model(),
             "accounts_count": len(sessions),
+            "alive_sessions": alive_sessions,
+            "dead_sessions": dead_sessions,
+            "busy_sessions": busy_sessions,
             "proxies_count": with_proxy,
             "paused_dialogs": len(self.state_store.list_all_dialogs({"paused"})),
             "running": self._running,
@@ -630,6 +759,7 @@ class AppService:
             is_assistant = s.account_id in agent_ids
             is_active = session_ready
             outreach_eligible = is_active and not is_assistant
+            health = self._get_session_health(s.account_id)
             result.append(
                 {
                     "id": s.account_id,
@@ -645,6 +775,11 @@ class AppService:
                     "outreach_eligible": outreach_eligible,
                     "twofa_file": twofa_file.name if twofa_file else "",
                     "is_duplicate": is_import_duplicate(s.account_id, all_ids),
+                    "session_health": health.get("status", "checking"),
+                    "session_health_label": health.get("label", "проверяется"),
+                    "session_health_error": health.get("error", ""),
+                    "session_health_checked_at": health.get("checked_at", ""),
+                    "session_health_runtime": health.get("runtime", ""),
                 }
             )
         return result

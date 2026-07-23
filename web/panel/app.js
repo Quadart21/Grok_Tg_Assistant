@@ -487,6 +487,12 @@ function proxyStatusChip(status) {
 
 function sessionStatusChip(account) {
   if (!account) return '<span class="chip muted">нет данных</span>';
+  if (account.session_health === "busy") return '<span class="chip">в работе</span>';
+  if (account.session_health === "alive") return '<span class="chip ok">жива</span>';
+  if (account.session_health === "dead") return '<span class="chip danger">ошибка сессии</span>';
+  if (account.session_health === "checking") return '<span class="chip warn">проверяется</span>';
+  if (account.session_health === "unknown") return '<span class="chip muted">нет api</span>';
+  if (account.session_health === "needs_conversion") return '<span class="chip warn">нужна конвертация</span>';
   if (!account.is_active) return '<span class="chip danger">неактивен</span>';
   if (account.session_ready) return '<span class="chip ok">готова</span>';
   if (account.format === "tdata") return '<span class="chip warn">нужна конвертация</span>';
@@ -506,14 +512,20 @@ function renderAccountsSummary() {
   const el = $("#accountsSummary");
   if (!el) return;
   const total = accountsCache.length;
-  const ready = accountsCache.filter((a) => a.session_ready).length;
+  const ready = accountsCache.filter((a) => a.session_health === "alive" || a.session_health === "busy").length;
   const withProxy = accountsCache.filter((a) => a.proxy).length;
-  const issues = accountsCache.filter((a) => !a.is_active || (a.format === "tdata" && !a.session_ready) || !a.proxy).length;
+  const issues = accountsCache.filter((a) =>
+    !a.is_active ||
+    a.session_health === "dead" ||
+    a.session_health === "unknown" ||
+    (a.format === "tdata" && !a.session_ready) ||
+    !a.proxy
+  ).length;
   el.innerHTML = [
-    buildSummaryCard("Всего сессий", total, `${ready} готовы к работе`),
+    buildSummaryCard("Всего сессий", total, `${ready} живы или уже в работе`),
     buildSummaryCard("С прокси", withProxy, `${Math.max(total - withProxy, 0)} без привязки`),
     buildSummaryCard("Выбрано", selectedForRun.size, total ? `из ${total} аккаунтов` : "ничего не отмечено"),
-    buildSummaryCard("Требуют внимания", issues, issues ? "неактивны, без proxy или без .session" : "критичных проблем не видно"),
+    buildSummaryCard("Требуют внимания", issues, issues ? "ошибки сессии, неактивность, нет proxy или нет api" : "критичных проблем не видно"),
   ].join("");
 }
 
@@ -717,10 +729,13 @@ function renderSessionDetail() {
   listEl.innerHTML = `
     <div><dt>ID</dt><dd>${safeText(acc.id)}</dd></div>
     <div><dt>Готовность</dt><dd>${acc.session_ready ? `Рабочий файл: ${safeText(acc.session_file || ".session")}` : "Нужна конвертация или повторный логин"}</dd></div>
+    <div><dt>Проверка сессии</dt><dd>${safeText(acc.session_health_label || "проверяется")}${acc.session_health_checked_at ? ` · ${safeText(formatDateTime(acc.session_health_checked_at))}` : ""}${acc.session_health_runtime ? ` · ${safeText(acc.session_health_runtime)}` : ""}${acc.session_health_error ? `<br><span class="hint">${safeText(acc.session_health_error)}</span>` : ""}</dd></div>
     <div><dt>Прокси</dt><dd>${acc.proxy ? safeText(acc.proxy) : "Не привязан"}</dd></div>
     <div><dt>Роль</dt><dd>${safeText(acc.role || (acc.is_assistant ? acc.assistant_name || "ассистент" : "не задана"))}</dd></div>
     <div><dt>Флаги</dt><dd>${[
       acc.is_active ? "активен" : "неактивен",
+      acc.session_health === "busy" ? "в работе" : "",
+      acc.session_health === "dead" ? "ошибка сессии" : "",
       acc.twofa_file ? `2FA: ${acc.twofa_file}` : "без 2FA файла",
       acc.is_duplicate ? "дубль" : "основная запись",
     ].map((x) => safeText(x)).join(" · ")}</dd></div>`;
@@ -926,7 +941,9 @@ function renderAccountsTable() {
     const readiness = [
       sessionStatusChip(a),
       a.format === "tdata" ? '<span class="chip warn">tdata</span>' : '<span class="chip">.session</span>',
-      a.session_ready ? `<span class="hint">${escapeHtml(a.session_file || "файл готов")}</span>` : '<span class="hint">нужно проверить логин</span>',
+      a.session_health_error
+        ? `<span class="hint">${escapeHtml(a.session_health_error)}</span>`
+        : (a.session_ready ? `<span class="hint">${escapeHtml(a.session_file || "файл готов")}</span>` : '<span class="hint">нужно проверить логин</span>'),
     ].join("<br>");
     const proxyCell = a.proxy
       ? `<span class="chip">${escapeHtml(a.proxy)}</span>`
@@ -939,6 +956,8 @@ function renderAccountsTable() {
       a.twofa_file ? '<span class="chip">2FA</span>' : "",
       a.is_duplicate ? '<span class="chip warn">дубль</span>' : "",
       !a.is_active ? '<span class="chip danger">неактивен</span>' : "",
+      a.session_health === "busy" ? '<span class="chip">в работе</span>' : "",
+      a.session_health === "dead" ? '<span class="chip danger">ошибка</span>' : "",
     ].filter(Boolean).join(" ");
     tr.innerHTML = `
       <td><input type="checkbox" class="acc-chk" data-id="${escapeHtml(a.id)}" ${checked} ${canSelect ? "" : "disabled"} onclick="event.stopPropagation()"></td>
