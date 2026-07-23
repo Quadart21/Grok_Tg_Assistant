@@ -153,6 +153,14 @@ class ProfilePreviewBody(BaseModel):
     count: int = 5
 
 
+class SessionProfileBody(BaseModel):
+    first_name: str = ""
+    last_name: str = ""
+    username: str = ""
+    about: str = ""
+    photo_path: str = ""
+
+
 class ConvertSessionsBody(BaseModel):
     account_ids: list[str] = []
 

@@ -557,6 +557,74 @@ function fillProxyPoolSelect(selectedId) {
   $("#btnSaveProxy").disabled = !selectedAccount;
 }
 
+function clearSessionProfileForm(msg = "") {
+  const hasAccount = Boolean(selectedAccount);
+  [
+    "#sessionProfileFirstName",
+    "#sessionProfileLastName",
+    "#sessionProfileUsername",
+    "#sessionProfileAbout",
+    "#sessionProfilePhotoPath",
+  ].forEach((selector) => {
+    const el = $(selector);
+    if (!el) return;
+    el.value = "";
+    el.disabled = !hasAccount;
+  });
+  if ($("#btnReloadSessionProfile")) $("#btnReloadSessionProfile").disabled = !hasAccount;
+  if ($("#btnSaveSessionProfile")) $("#btnSaveSessionProfile").disabled = !hasAccount;
+  if ($("#sessionProfileMsg")) $("#sessionProfileMsg").textContent = msg;
+}
+
+function fillSessionProfileForm(profile) {
+  if ($("#sessionProfileFirstName")) $("#sessionProfileFirstName").value = profile.first_name || "";
+  if ($("#sessionProfileLastName")) $("#sessionProfileLastName").value = profile.last_name || "";
+  if ($("#sessionProfileUsername")) $("#sessionProfileUsername").value = profile.username || "";
+  if ($("#sessionProfileAbout")) $("#sessionProfileAbout").value = profile.about || "";
+  if ($("#sessionProfilePhotoPath")) $("#sessionProfilePhotoPath").value = "";
+  if ($("#sessionProfileMsg")) {
+    $("#sessionProfileMsg").textContent = profile.has_photo ? "Профиль загружен. У аккаунта уже есть фото." : "Профиль загружен.";
+  }
+}
+
+async function loadSessionProfile(accountId) {
+  if (!accountId) {
+    clearSessionProfileForm("");
+    return;
+  }
+  clearSessionProfileForm("Загрузка профиля...");
+  try {
+    const profile = await api(`/api/accounts/${encodeURIComponent(accountId)}/profile`);
+    if (selectedAccount !== accountId) return;
+    fillSessionProfileForm(profile);
+  } catch (e) {
+    if ($("#sessionProfileMsg")) $("#sessionProfileMsg").textContent = e.message || "Не удалось загрузить профиль";
+  }
+}
+
+async function saveSessionProfile() {
+  const accountId = selectedAccount;
+  if (!accountId) return;
+  if ($("#sessionProfileMsg")) $("#sessionProfileMsg").textContent = "Сохранение профиля...";
+  try {
+    await api(`/api/accounts/${encodeURIComponent(accountId)}/profile`, {
+      method: "POST",
+      body: JSON.stringify({
+        first_name: $("#sessionProfileFirstName")?.value || "",
+        last_name: $("#sessionProfileLastName")?.value || "",
+        username: $("#sessionProfileUsername")?.value || "",
+        about: $("#sessionProfileAbout")?.value || "",
+        photo_path: $("#sessionProfilePhotoPath")?.value || "",
+      }),
+    });
+    if ($("#sessionProfileMsg")) $("#sessionProfileMsg").textContent = "Профиль сохранён";
+    await loadAccounts();
+    await loadSessionProfile(accountId);
+  } catch (e) {
+    if ($("#sessionProfileMsg")) $("#sessionProfileMsg").textContent = e.message || "Не удалось сохранить профиль";
+  }
+}
+
 function renderSessionDetail() {
   const labelEl = $("#proxyAccountLabel");
   const badgeEl = $("#sessionDetailBadge");
@@ -572,6 +640,7 @@ function renderSessionDetail() {
     metaEl.innerHTML = '<span class="chip muted">Ожидание выбора</span>';
     listEl.innerHTML = '<div><dt>Статус</dt><dd class="detail-empty">Список появится после выбора строки.</dd></div>';
     fillProxyPoolSelect("");
+    clearSessionProfileForm("");
     return;
   }
 
@@ -1006,6 +1075,7 @@ async function selectAccount(id) {
       fillProxyPoolSelect(p.proxy_id);
     }
   } catch (_) {}
+  await loadSessionProfile(id);
 }
 
 $("#btnRefreshAccounts").onclick = () => { loadAccounts(); refreshStatus(); };
@@ -1186,6 +1256,14 @@ $("#btnClearProxy").onclick = async () => {
     fillProxyPoolSelect("");
   } catch (e) { alert(e.message); }
 };
+
+$("#btnReloadSessionProfile")?.addEventListener("click", async () => {
+  await loadSessionProfile(selectedAccount);
+});
+
+$("#btnSaveSessionProfile")?.addEventListener("click", async () => {
+  await saveSessionProfile();
+});
 
 $("#btnImportProxyPool").onclick = async () => {
   const lines = $("#proxyPoolImport")?.value?.trim();

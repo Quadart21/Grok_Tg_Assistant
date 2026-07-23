@@ -31,6 +31,9 @@
     currentDialogKey: null,
     accountViewFilters: new Set(['outreach_eligible']),
     accountFiltersInited: false,
+    logLines: [],
+    loadedPanels: {},
+    panelLoadPromises: {},
   };
 
 const $ = (sel) => document.querySelector(sel);
@@ -40,11 +43,12 @@ let selectedProxyId = null;
 let groupChatStatusCache = null;
 let activeGroupChatSection = "team";
 const PANEL_POLL_INTERVALS = {
-  statusVisible: 2000,
-  statusHidden: 8000,
-  heavyVisible: 5000,
-  logsVisible: 2500,
+  statusVisible: 4000,
+  statusHidden: 12000,
+  heavyVisible: 12000,
+  logsVisible: 5000,
 };
+const PANEL_LOG_LINE_LIMIT = 400;
 const panelPollState = {
   timer: null,
   inFlight: false,
@@ -155,7 +159,55 @@ P.showTab = function(name) {
   try {
     localStorage.setItem("panel.activeTab", name);
   } catch (_) {}
+  P.ensurePanelData(name).catch(() => {});
   P.requestPanelPoll(80, true);
+}
+
+P.ensurePanelData = async function(name, force = false) {
+  const loaders = {
+    outreach: async () => {
+      await P.refreshEngine();
+      await P.refreshLogs();
+    },
+    connect: async () => {
+      await P.loadConfig();
+    },
+    accounts: async () => {
+      await P.loadAccounts();
+    },
+    proxies: async () => {
+      await Promise.allSettled([P.loadProxyPool(), P.loadAccounts()]);
+    },
+    roles: async () => {
+      await P.loadRoles();
+    },
+    dialogs: async () => {
+      await Promise.allSettled([P.loadDialogSettings(), P.loadDialogs()]);
+    },
+    agents: async () => {
+      await P.loadAgents();
+    },
+    groupchat: async () => {
+      if (!P.state.accountsCache.length) {
+        await P.loadAccounts();
+      }
+      await P.loadGroupChat();
+    },
+  };
+  const loader = loaders[name];
+  if (!loader) return;
+  if (!force && P.state.loadedPanels[name]) return;
+  if (!force && P.state.panelLoadPromises[name]) return P.state.panelLoadPromises[name];
+  const pending = (async () => {
+    try {
+      await loader();
+      P.state.loadedPanels[name] = true;
+    } finally {
+      delete P.state.panelLoadPromises[name];
+    }
+  })();
+  P.state.panelLoadPromises[name] = pending;
+  return pending;
 }
 
 P.setGroupChatSection = function(name) {
@@ -255,7 +307,11 @@ P.refreshLogs = async function() {
   if (!box) return;
   const { lines, total } = await P.api(`/api/logs?offset=${P.state.logOffset}`);
   if (lines.length) {
-    box.textContent += lines.join("\n") + "\n";
+    P.state.logLines.push(...lines);
+    if (P.state.logLines.length > PANEL_LOG_LINE_LIMIT) {
+      P.state.logLines.splice(0, P.state.logLines.length - PANEL_LOG_LINE_LIMIT);
+    }
+    box.textContent = P.state.logLines.join("\n") + "\n";
     box.scrollTop = box.scrollHeight;
   }
   P.state.logOffset = total;
@@ -580,6 +636,74 @@ P.fillProxyPoolSelect = function(selectedId) {
   P.$("#btnSaveProxy").disabled = !P.state.selectedAccount;
 }
 
+P.clearSessionProfileForm = function(msg = "") {
+  const hasAccount = Boolean(P.state.selectedAccount);
+  [
+    "#sessionProfileFirstName",
+    "#sessionProfileLastName",
+    "#sessionProfileUsername",
+    "#sessionProfileAbout",
+    "#sessionProfilePhotoPath",
+  ].forEach((selector) => {
+    const el = P.$(selector);
+    if (!el) return;
+    el.value = "";
+    el.disabled = !hasAccount;
+  });
+  if (P.$("#btnReloadSessionProfile")) P.$("#btnReloadSessionProfile").disabled = !hasAccount;
+  if (P.$("#btnSaveSessionProfile")) P.$("#btnSaveSessionProfile").disabled = !hasAccount;
+  if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = msg;
+}
+
+P.fillSessionProfileForm = function(profile) {
+  if (P.$("#sessionProfileFirstName")) P.$("#sessionProfileFirstName").value = profile.first_name || "";
+  if (P.$("#sessionProfileLastName")) P.$("#sessionProfileLastName").value = profile.last_name || "";
+  if (P.$("#sessionProfileUsername")) P.$("#sessionProfileUsername").value = profile.username || "";
+  if (P.$("#sessionProfileAbout")) P.$("#sessionProfileAbout").value = profile.about || "";
+  if (P.$("#sessionProfilePhotoPath")) P.$("#sessionProfilePhotoPath").value = "";
+  if (P.$("#sessionProfileMsg")) {
+    P.$("#sessionProfileMsg").textContent = profile.has_photo ? "Профиль загружен. У аккаунта уже есть фото." : "Профиль загружен.";
+  }
+}
+
+P.loadSessionProfile = async function(accountId) {
+  if (!accountId) {
+    P.clearSessionProfileForm("");
+    return;
+  }
+  P.clearSessionProfileForm("Загрузка профиля...");
+  try {
+    const profile = await P.api(`/api/accounts/${encodeURIComponent(accountId)}/profile`);
+    if (P.state.selectedAccount !== accountId) return;
+    P.fillSessionProfileForm(profile);
+  } catch (e) {
+    if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = e.message || "Не удалось загрузить профиль";
+  }
+}
+
+P.saveSessionProfile = async function() {
+  const accountId = P.state.selectedAccount;
+  if (!accountId) return;
+  if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = "Сохранение профиля...";
+  try {
+    await P.api(`/api/accounts/${encodeURIComponent(accountId)}/profile`, {
+      method: "POST",
+      body: JSON.stringify({
+        first_name: P.$("#sessionProfileFirstName")?.value || "",
+        last_name: P.$("#sessionProfileLastName")?.value || "",
+        username: P.$("#sessionProfileUsername")?.value || "",
+        about: P.$("#sessionProfileAbout")?.value || "",
+        photo_path: P.$("#sessionProfilePhotoPath")?.value || "",
+      }),
+    });
+    if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = "Профиль сохранён";
+    await P.loadAccounts();
+    await P.loadSessionProfile(accountId);
+  } catch (e) {
+    if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = e.message || "Не удалось сохранить профиль";
+  }
+}
+
 P.renderSessionDetail = function() {
   const labelEl = P.$("#proxyAccountLabel");
   const badgeEl = P.$("#sessionDetailBadge");
@@ -595,6 +719,7 @@ P.renderSessionDetail = function() {
     metaEl.innerHTML = '<span class="chip muted">Ожидание выбора</span>';
     listEl.innerHTML = '<div><dt>Статус</dt><dd class="detail-empty">Список появится после выбора строки.</dd></div>';
     P.fillProxyPoolSelect("");
+    P.clearSessionProfileForm("");
     return;
   }
 
@@ -1027,6 +1152,7 @@ P.selectAccount = async function(id) {
       P.fillProxyPoolSelect(p.proxy_id);
     }
   } catch (_) {}
+  await P.loadSessionProfile(id);
 }
 
 P.$("#btnRefreshAccounts").onclick = () => { P.loadAccounts(); P.refreshStatus(); };
@@ -1207,6 +1333,14 @@ P.$("#btnClearProxy").onclick = async () => {
     P.fillProxyPoolSelect("");
   } catch (e) { alert(e.message); }
 };
+
+P.$("#btnReloadSessionProfile")?.addEventListener("click", async () => {
+  await P.loadSessionProfile(P.state.selectedAccount);
+});
+
+P.$("#btnSaveSessionProfile")?.addEventListener("click", async () => {
+  await P.saveSessionProfile();
+});
 
 P.$("#btnImportProxyPool").onclick = async () => {
   const lines = P.$("#proxyPoolImport")?.value?.trim();
@@ -2686,17 +2820,8 @@ P.bootstrap = async function() {
   window.__panelBootStarted = true;
   P.initNavigation();
   P.initGroupChatSectionNav();
-  await Promise.allSettled([
-    P.loadConfig(),
-    P.loadProxyPool(),
-    P.loadAccounts(),
-    P.loadRoles(),
-    P.loadDialogSettings(),
-    P.loadDialogs(),
-    P.loadAgents(),
-    P.loadGroupChat(),
-    P.refreshStatus(),
-  ]);
+  await P.refreshStatus();
+  await P.ensurePanelData(P.getActiveTab());
   document.addEventListener("visibilitychange", () => {
     P.requestPanelPoll(150, true);
   });

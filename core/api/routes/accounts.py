@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
 
-from core.api.schemas import BulkProfileBody, ConvertSessionsBody, ProfilePreviewBody, ProxyBody
+from core.api.schemas import (
+    BulkProfileBody,
+    ConvertSessionsBody,
+    ProfilePreviewBody,
+    ProxyBody,
+    SessionProfileBody,
+)
 from core.app_service import AppService
 
 
@@ -41,3 +47,17 @@ def register(app: FastAPI, service: AppService) -> None:
     @app.post("/api/accounts/profile-preview")
     def api_profile_preview(body: ProfilePreviewBody) -> dict:
         return service.preview_profile_generation(body.model_dump())
+
+    @app.get("/api/accounts/{account_id}/profile")
+    def api_get_account_profile(account_id: str) -> dict:
+        try:
+            return service.get_account_profile(account_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/accounts/{account_id}/profile")
+    def api_save_account_profile(account_id: str, body: SessionProfileBody) -> dict:
+        try:
+            return service.update_account_profile(account_id, body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc

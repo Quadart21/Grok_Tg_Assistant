@@ -260,19 +260,57 @@
               <div class="detail-header">
                 <div>
                   <h3>Карточка сессии</h3>
-                  <p id="proxyAccountLabel" class="hint">Выберите аккаунт в таблице</p>
+                  <p id="proxyAccountLabel" class="hint">Одна рабочая зона для выбранного аккаунта: статус, профиль Telegram и прокси.</p>
                 </div>
                 <span class="chip muted" id="sessionDetailBadge">нет выбора</span>
               </div>
               <div class="detail-badges" id="sessionDetailMeta">
                 <span class="chip muted">Ожидание выбора</span>
               </div>
+              <div class="detail-section">
+                <h4>Сводка</h4>
+                <p class="hint">Быстрый статус выбранной сессии и её готовности к работе.</p>
+              </div>
               <dl class="detail-list" id="sessionDetailList">
                 <div><dt>Статус</dt><dd>Список появится после выбора строки.</dd></div>
               </dl>
 
+              <div class="detail-section detail-workspace">
+                <div>
+                  <h4>Профиль Telegram</h4>
+                  <p class="hint">Меняйте имя, username, описание и фото прямо у выбранной Telegram-сессии.</p>
+                </div>
+                <div class="session-profile-grid">
+                  <div>
+                    <label class="label" for="sessionProfileFirstName">Имя</label>
+                    <input type="text" id="sessionProfileFirstName" disabled>
+                  </div>
+                  <div>
+                    <label class="label" for="sessionProfileLastName">Фамилия</label>
+                    <input type="text" id="sessionProfileLastName" disabled>
+                  </div>
+                  <div class="full">
+                    <label class="label" for="sessionProfileUsername">Username</label>
+                    <input type="text" id="sessionProfileUsername" placeholder="@username" disabled>
+                  </div>
+                  <div class="full">
+                    <label class="label" for="sessionProfileAbout">Статус / about</label>
+                    <textarea id="sessionProfileAbout" rows="3" disabled></textarea>
+                  </div>
+                  <div class="full">
+                    <label class="label" for="sessionProfilePhotoPath">Путь к фото</label>
+                    <input type="text" id="sessionProfilePhotoPath" placeholder="C:\path\photo.jpg" disabled>
+                  </div>
+                </div>
+                <div class="session-profile-actions">
+                  <button class="btn ghost" id="btnReloadSessionProfile" disabled>↻ Загрузить профиль</button>
+                  <button class="btn primary" id="btnSaveSessionProfile" disabled>Сохранить профиль</button>
+                </div>
+                <p class="msg" id="sessionProfileMsg"></p>
+              </div>
+
               <div class="detail-section">
-                <h4>Быстрая привязка прокси</h4>
+                <h4>Прокси</h4>
                 <p class="hint">Можно выбрать прокси из пула или добавить новый вручную прямо отсюда.</p>
               </div>
               <label class="label">Прокси из пула</label>
@@ -615,11 +653,11 @@
                 <button type="button" class="btn ghost" data-gc-nav="roles">Роли</button>
                 <button type="button" class="btn ghost" data-gc-nav="venue">Площадка</button>
                 <button type="button" class="btn ghost" data-gc-nav="scene">Сцена</button>
-                <button type="button" class="btn ghost" data-gc-nav="autopilot">Автопилот</button>
-                <button type="button" class="btn ghost" data-gc-nav="style">Стиль</button>
+                <button type="button" class="btn ghost" data-gc-nav="autopilot">Темп</button>
+                <button type="button" class="btn ghost" data-gc-nav="style">Поведение</button>
               </div>
               <div class="group-chat-toolbar">
-                <p class="hint">Экран разбит на отдельные шаги: сначала собираете состав, потом задаёте площадку и сцену, после этого настраиваете автопилот и стиль ответов.</p>
+                <p class="hint">Логика теперь простая: соберите участников, выберите чат, задайте сцену, затем подкрутите темп и поведение только там, где это действительно нужно.</p>
                 <button class="btn primary" id="btnSaveGroupChatSettings">Сохранить автопилот и стиль</button>
               </div>
             </div>
@@ -647,7 +685,7 @@
                 <div class="section-block-heading">
                   <div>
                     <h3>Командные роли</h3>
-                    <p class="hint">У каждого участника можно отдельно задать роль, манеру общения и индивидуальный промпт под сцену.</p>
+                    <p class="hint">Здесь задаётся только роль внутри этой сцены: кто ведёт, кто поддакивает, кто спорит, кто держится в фоне.</p>
                   </div>
                 </div>
                 <div id="groupChatRolesBox"></div>
@@ -684,22 +722,33 @@
               <div class="card">
                 <div class="section-block-heading">
                   <div>
-                    <h3>Сцена и контекст</h3>
-                    <p class="hint">Здесь задаётся общая линия разговора: тема, фон беседы и быстрый темп общения.</p>
+                    <h3>Конструктор сцены</h3>
+                    <p class="hint">Обычно здесь достаточно темы, короткого фона и пары служебных переключателей.</p>
                   </div>
                 </div>
-                <label class="label">Тема разговора</label>
-                <input type="text" id="groupChatTopic" placeholder="Например: обсуждаем запуск продукта">
-                <label class="label">Контекст сцены</label>
-                <textarea id="groupChatExtra" rows="4" placeholder="Что уже известно, какой фон у беседы, какие детали важно упоминать..."></textarea>
-                <label class="inline-check">
-                  <input type="checkbox" id="groupChatResetContextOnApply">
-                  При применении сцены сбрасывать память чата и перечитывать свежую историю
-                </label>
-                <label class="inline-check">
-                  <input type="checkbox" id="groupChatDebugFastMode">
-                  Отладка: очень быстрый чат (5-10 сек между сообщениями)
-                </label>
+                <div class="settings-stack">
+                  <div>
+                    <label class="label">Тема разговора</label>
+                    <input type="text" id="groupChatTopic" placeholder="Например: обсуждаем запуск продукта">
+                  </div>
+                  <div>
+                    <label class="label">Контекст сцены</label>
+                    <textarea id="groupChatExtra" rows="4" placeholder="Что уже известно, какой фон у беседы, какие детали важно упоминать..."></textarea>
+                  </div>
+                </div>
+                <details class="inline-details">
+                  <summary>Служебные опции сцены</summary>
+                  <div class="settings-stack" style="margin-top:0.85rem">
+                    <label class="inline-check">
+                      <input type="checkbox" id="groupChatResetContextOnApply">
+                      При применении сцены сбрасывать память чата и перечитывать свежую историю
+                    </label>
+                    <label class="inline-check">
+                      <input type="checkbox" id="groupChatDebugFastMode">
+                      Отладка: очень быстрый чат (5-10 сек между сообщениями)
+                    </label>
+                  </div>
+                </details>
                 <div class="btn-row">
                   <button type="button" class="btn ghost" id="btnGroupChatResetTopic">Сбросить тему</button>
                   <button type="button" class="btn ghost" id="btnGroupChatClearScene">Очистить сцену</button>
@@ -721,45 +770,21 @@
               <div class="group-chat-section-grid">
                 <div class="card">
                   <div class="card-header">
-                    <h3>Расписание активности</h3>
+                    <h3>Базовый темп группы</h3>
                   </div>
                   <div class="grid2">
                     <label class="inline-check"><input type="checkbox" id="gc_use_schedule" checked> Работать по расписанию</label>
                     <label class="inline-check"><input type="checkbox" id="gc_resume_next_day" checked> Продолжать на следующий день</label>
                     <div>
-                      <label class="label">Смещение TZ (часов, пусто = ПК)</label>
-                      <input type="number" id="gc_timezone_offset_hours" step="0.5" placeholder="пусто = локально">
-                    </div>
-                    <div>
                       <label class="label">Вероятность онлайна (0–1)</label>
                       <input type="number" id="gc_online_probability" min="0" max="1" step="0.05" value="0.55">
                     </div>
                     <div>
-                      <label class="label">Тихая пауза мин (мин–макс)</label>
+                      <label class="label">Пауза между спикерами (сек)</label>
                       <div class="btn-row">
-                        <input type="number" id="gc_quiet_break_min_min" value="15" style="width:6rem">
-                        <input type="number" id="gc_quiet_break_max_min" value="90" style="width:6rem">
+                        <input type="number" id="gc_delay_between_speakers_min_sec" value="25" style="width:6rem">
+                        <input type="number" id="gc_delay_between_speakers_max_sec" value="120" style="width:6rem">
                       </div>
-                    </div>
-                    <div>
-                      <label class="label">Шанс тихой паузы (0–1)</label>
-                      <input type="number" id="gc_quiet_break_chance" min="0" max="1" step="0.01" value="0.12">
-                    </div>
-                  </div>
-                  <label class="label">Окна активности (JSON: days 0=Пн…6=Вс, start/end HH:MM)</label>
-                  <textarea id="gc_activity_windows" rows="5"></textarea>
-                </div>
-
-                <div class="card">
-                  <div class="card-header"><h3>Квоты и ритм группы</h3></div>
-                  <div class="grid2">
-                    <div>
-                      <label class="label">Лимит / аккаунт / сессия</label>
-                      <input type="number" id="gc_max_messages_per_account_session" value="40">
-                    </div>
-                    <div>
-                      <label class="label">Лимит / аккаунт / час</label>
-                      <input type="number" id="gc_max_messages_per_account_hour" value="12">
                     </div>
                     <div>
                       <label class="label">Лимит / аккаунт / день</label>
@@ -770,17 +795,55 @@
                       <input type="number" id="gc_max_messages_group_day" value="80">
                     </div>
                     <div>
-                      <label class="label">Burst мин–макс</label>
-                      <div class="btn-row">
-                        <input type="number" id="gc_burst_min" value="1" style="width:6rem">
-                        <input type="number" id="gc_burst_max" value="3" style="width:6rem">
-                      </div>
-                    </div>
-                    <div>
-                      <label class="label">Макс. подряд один спикер</label>
-                      <input type="number" id="gc_max_consecutive_same_speaker" value="3">
+                      <label class="label">Шанс тихой паузы (0–1)</label>
+                      <input type="number" id="gc_quiet_break_chance" min="0" max="1" step="0.01" value="0.12">
                     </div>
                   </div>
+                  <details class="inline-details">
+                    <summary>Продвинутая настройка темпа и расписания</summary>
+                    <div class="grid2" style="margin-top:0.85rem">
+                      <div>
+                        <label class="label">Смещение TZ (часов, пусто = ПК)</label>
+                        <input type="number" id="gc_timezone_offset_hours" step="0.5" placeholder="пусто = локально">
+                      </div>
+                      <div>
+                        <label class="label">Лимит / аккаунт / сессия</label>
+                        <input type="number" id="gc_max_messages_per_account_session" value="40">
+                      </div>
+                      <div>
+                        <label class="label">Лимит / аккаунт / час</label>
+                        <input type="number" id="gc_max_messages_per_account_hour" value="12">
+                      </div>
+                      <div>
+                        <label class="label">Тихая пауза мин (мин–макс)</label>
+                        <div class="btn-row">
+                          <input type="number" id="gc_quiet_break_min_min" value="15" style="width:6rem">
+                          <input type="number" id="gc_quiet_break_max_min" value="90" style="width:6rem">
+                        </div>
+                      </div>
+                      <div>
+                        <label class="label">Burst мин–макс</label>
+                        <div class="btn-row">
+                          <input type="number" id="gc_burst_min" value="1" style="width:6rem">
+                          <input type="number" id="gc_burst_max" value="3" style="width:6rem">
+                        </div>
+                      </div>
+                      <div>
+                        <label class="label">Пауза внутри burst (сек)</label>
+                        <div class="btn-row">
+                          <input type="number" id="gc_delay_within_burst_min_sec" value="3" style="width:6rem">
+                          <input type="number" id="gc_delay_within_burst_max_sec" value="12" style="width:6rem">
+                        </div>
+                      </div>
+                      <div>
+                        <label class="label">Макс. подряд один спикер</label>
+                        <input type="number" id="gc_max_consecutive_same_speaker" value="3">
+                      </div>
+                    </div>
+                    <label class="label">Окна активности (JSON: days 0=Пн…6=Вс, start/end HH:MM)</label>
+                    <textarea id="gc_activity_windows" rows="5"></textarea>
+                    <p class="hint">Если ручной JSON не нужен, оставьте его как есть и пользуйтесь только базовыми полями выше.</p>
+                  </details>
                 </div>
               </div>
             </div>
@@ -788,55 +851,12 @@
             <div class="group-chat-section" data-gc-section="style">
               <div class="group-chat-section-grid">
                 <div class="card">
-                  <div class="card-header"><h3>Тайминги ответа</h3></div>
-                  <div class="grid2">
-                    <div>
-                      <label class="label">Пауза между спикерами (сек)</label>
-                      <div class="btn-row">
-                        <input type="number" id="gc_delay_between_speakers_min_sec" value="25" style="width:6rem">
-                        <input type="number" id="gc_delay_between_speakers_max_sec" value="120" style="width:6rem">
-                      </div>
-                    </div>
-                    <div>
-                      <label class="label">Пауза внутри burst (сек)</label>
-                      <div class="btn-row">
-                        <input type="number" id="gc_delay_within_burst_min_sec" value="3" style="width:6rem">
-                        <input type="number" id="gc_delay_within_burst_max_sec" value="12" style="width:6rem">
-                      </div>
-                    </div>
-                    <div>
-                      <label class="label">Шанс «прочитал и ждёт»</label>
-                      <input type="number" id="gc_read_and_wait_chance" min="0" max="1" step="0.05" value="0.25">
-                    </div>
-                    <div>
-                      <label class="label">Ожидание после прочтения (сек)</label>
-                      <div class="btn-row">
-                        <input type="number" id="gc_read_and_wait_min_sec" value="20" style="width:6rem">
-                        <input type="number" id="gc_read_and_wait_max_sec" value="90" style="width:6rem">
-                      </div>
-                    </div>
-                    <div>
-                      <label class="label">Шанс короткой реплики</label>
-                      <input type="number" id="gc_short_reply_chance" min="0" max="1" step="0.05" value="0.35">
-                    </div>
-                  </div>
-                </div>
-
-                <div class="card">
-                  <div class="card-header"><h3>Стиль реплик и реакции</h3></div>
+                  <div class="card-header"><h3>Поведение в чате</h3></div>
                   <div class="grid2">
                     <label class="inline-check"><input type="checkbox" id="gc_reply_to_humans_enabled" checked> Отвечать живым участникам</label>
-                    <label class="inline-check"><input type="checkbox" id="gc_reply_to_humans_only_on_quote" checked> Только если процитировали нашего участника</label>
                     <div>
                       <label class="label">Шанс ответа живому участнику</label>
                       <input type="number" id="gc_reply_to_humans_chance" min="0" max="1" step="0.05" value="0.85">
-                    </div>
-                    <div>
-                      <label class="label">Пауза между ответами живым (сек)</label>
-                      <div class="btn-row">
-                        <input type="number" id="gc_reply_to_humans_cooldown_min_sec" value="45" style="width:6rem">
-                        <input type="number" id="gc_reply_to_humans_cooldown_max_sec" value="150" style="width:6rem">
-                      </div>
                     </div>
                     <div>
                       <label class="label">Стиль реплик</label>
@@ -847,37 +867,63 @@
                       </select>
                     </div>
                     <div>
-                      <label class="label">Язык</label>
-                      <input type="text" id="gc_language" value="ru">
-                    </div>
-                    <div>
-                      <label class="label">Temperature / max tokens</label>
-                      <div class="btn-row">
-                        <input type="number" id="gc_temperature" step="0.1" value="0.9" style="width:6rem">
-                        <input type="number" id="gc_max_tokens" value="250" style="width:6rem">
-                      </div>
-                    </div>
-                    <div>
                       <label class="label">История (сообщений)</label>
                       <input type="number" id="gc_history_limit" value="40">
                     </div>
                     <div>
-                      <label class="inline-check" style="margin-top:1.5rem"><input type="checkbox" id="gc_split_long_messages" checked> Дробить длинные</label>
+                      <label class="label">Шанс короткой реплики</label>
+                      <input type="number" id="gc_short_reply_chance" min="0" max="1" step="0.05" value="0.35">
                     </div>
-                    <div>
-                      <label class="label">Дробить от N символов / макс. частей</label>
-                      <div class="btn-row">
-                        <input type="number" id="gc_split_at_chars" value="280" style="width:6rem">
-                        <input type="number" id="gc_split_parts_max" value="3" style="width:6rem">
+                    <label class="inline-check"><input type="checkbox" id="gc_split_long_messages" checked> Дробить длинные сообщения</label>
+                  </div>
+                  <details class="inline-details">
+                    <summary>Продвинутая настройка реакций и генерации</summary>
+                    <div class="grid2" style="margin-top:0.85rem">
+                      <label class="inline-check"><input type="checkbox" id="gc_reply_to_humans_only_on_quote" checked> Только если процитировали нашего участника</label>
+                      <div>
+                        <label class="label">Пауза между ответами живым (сек)</label>
+                        <div class="btn-row">
+                          <input type="number" id="gc_reply_to_humans_cooldown_min_sec" value="45" style="width:6rem">
+                          <input type="number" id="gc_reply_to_humans_cooldown_max_sec" value="150" style="width:6rem">
+                        </div>
+                      </div>
+                      <div>
+                        <label class="label">Шанс «прочитал и ждёт»</label>
+                        <input type="number" id="gc_read_and_wait_chance" min="0" max="1" step="0.05" value="0.25">
+                      </div>
+                      <div>
+                        <label class="label">Ожидание после прочтения (сек)</label>
+                        <div class="btn-row">
+                          <input type="number" id="gc_read_and_wait_min_sec" value="20" style="width:6rem">
+                          <input type="number" id="gc_read_and_wait_max_sec" value="90" style="width:6rem">
+                        </div>
+                      </div>
+                      <div>
+                        <label class="label">Язык</label>
+                        <input type="text" id="gc_language" value="ru">
+                      </div>
+                      <div>
+                        <label class="label">Temperature / max tokens</label>
+                        <div class="btn-row">
+                          <input type="number" id="gc_temperature" step="0.1" value="0.9" style="width:6rem">
+                          <input type="number" id="gc_max_tokens" value="250" style="width:6rem">
+                        </div>
+                      </div>
+                      <div>
+                        <label class="label">Дробить от N символов / макс. частей</label>
+                        <div class="btn-row">
+                          <input type="number" id="gc_split_at_chars" value="280" style="width:6rem">
+                          <input type="number" id="gc_split_parts_max" value="3" style="width:6rem">
+                        </div>
                       </div>
                     </div>
                     <div>
                       <label class="label">Стоп-слова (через запятую)</label>
                       <input type="text" id="gc_stop_keywords" value="стоп боты, stop bots">
                     </div>
-                  </div>
+                  </details>
                   <div class="group-chat-action-bar">
-                    <p class="hint">Сохранение применяется к настройкам автопилота и стиля. Состав, роли и сцена сохраняются отдельной кнопкой внутри сценария.</p>
+                    <p class="hint">Сохраняются только темп и поведение. Состав, роли, площадка и сцена живут отдельно в своём шаге.</p>
                     <p id="groupChatSettingsMsg" class="msg"></p>
                   </div>
                 </div>

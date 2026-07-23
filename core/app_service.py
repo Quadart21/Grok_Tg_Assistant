@@ -784,6 +784,94 @@ class AppService:
         samples = preview_profiles(mode, lang, count, with_username)
         return {"samples": samples}
 
+    def get_account_profile(self, account_id: str) -> dict[str, Any]:
+        if not self.config.telegram_api_id or not self.config.telegram_api_hash:
+            raise ValueError("Сначала заполните Telegram API ID и Hash")
+        account = next((acc for acc in self.get_accounts() if acc["id"] == account_id), None)
+        if not account:
+            raise ValueError("Аккаунт не найден")
+        if not account.get("session_ready"):
+            raise ValueError("Для аккаунта нет рабочего .session")
+
+        sessions = {s.account_id: s for s in discover_sessions(self.base_dir / self.config.sessions_dir)}
+        session = sessions.get(account_id)
+        if not session:
+            raise ValueError("Сессия не найдена в папке sessions")
+
+        proxies = load_proxies(self.proxies_path)
+        proxy = self._proxy_for_account(account_id, proxies)
+        pwd = read_twofa_password(session, self.config.telegram_2fa_password)
+        client = TelegramAccountClient(
+            session,
+            self.config.telegram_api_id,
+            self.config.telegram_api_hash,
+            proxy,
+            pwd,
+        )
+
+        async def run_one() -> dict[str, Any]:
+            await client.connect()
+            try:
+                return await client.get_profile()
+            finally:
+                await client.disconnect()
+
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(run_one())
+        finally:
+            loop.close()
+
+    def update_account_profile(self, account_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        if not self.config.telegram_api_id or not self.config.telegram_api_hash:
+            raise ValueError("Сначала заполните Telegram API ID и Hash")
+        account = next((acc for acc in self.get_accounts() if acc["id"] == account_id), None)
+        if not account:
+            raise ValueError("Аккаунт не найден")
+        if not account.get("session_ready"):
+            raise ValueError("Для аккаунта нет рабочего .session")
+
+        sessions = {s.account_id: s for s in discover_sessions(self.base_dir / self.config.sessions_dir)}
+        session = sessions.get(account_id)
+        if not session:
+            raise ValueError("Сессия не найдена в папке sessions")
+
+        proxies = load_proxies(self.proxies_path)
+        proxy = self._proxy_for_account(account_id, proxies)
+        pwd = read_twofa_password(session, self.config.telegram_2fa_password)
+        client = TelegramAccountClient(
+            session,
+            self.config.telegram_api_id,
+            self.config.telegram_api_hash,
+            proxy,
+            pwd,
+        )
+
+        def clean_text(value: Any) -> str | None:
+            if value is None:
+                return None
+            return str(value).strip()
+
+        async def run_one() -> dict[str, Any]:
+            await client.connect()
+            try:
+                profile = await client.update_profile(
+                    first_name=clean_text(data.get("first_name")),
+                    last_name=clean_text(data.get("last_name")),
+                    username=clean_text(data.get("username")),
+                    about=clean_text(data.get("about")),
+                    photo_path=clean_text(data.get("photo_path")),
+                )
+                return {"ok": True, "profile": profile}
+            finally:
+                await client.disconnect()
+
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(run_one())
+        finally:
+            loop.close()
+
     def get_roles_dict(self) -> dict[str, Any]:
         self.roles = RolesConfig.load(self.roles_path)
         accounts = self.get_accounts()

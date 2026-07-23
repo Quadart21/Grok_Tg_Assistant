@@ -549,6 +549,32 @@
 
 .llm-keys-grid { margin-top: 1rem; }
 
+.detail-workspace {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.settings-stack {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.session-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.session-profile-grid .full {
+  grid-column: 1 / -1;
+}
+
+.session-profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
 /* ─── Modals ─── */
 .modal {
   position: fixed;
@@ -601,5 +627,15 @@ code {
   padding: 0.15rem 0.45rem;
   border-radius: 5px;
   border: 1px solid var(--border);
+}
+
+@media (max-width: 720px) {
+  .session-profile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .session-profile-grid .full {
+    grid-column: auto;
+  }
 }
 

@@ -240,35 +240,47 @@ class TelegramAccountClient:
         first_name: str | None = None,
         last_name: str | None = None,
         username: str | None = None,
-    ) -> dict[str, str]:
+        about: str | None = None,
+        photo_path: str | None = None,
+    ) -> dict[str, str | bool]:
         if not self._client:
             raise RuntimeError("Клиент не подключён")
-        if first_name is not None or last_name is not None:
+        if first_name is not None or last_name is not None or about is not None:
             await self._client(
                 functions.account.UpdateProfileRequest(
                     first_name=first_name,
                     last_name=last_name,
+                    about=about,
                 )
             )
         if username is not None:
+            normalized = username.lstrip("@").strip()
             await self._client(
-                functions.account.UpdateUsernameRequest(username=username.lstrip("@").strip())
+                functions.account.UpdateUsernameRequest(username=normalized)
             )
-        me = await self._client.get_me()
-        return {
-            "first_name": me.first_name or "",
-            "last_name": me.last_name or "",
-            "username": me.username or "",
-        }
+        if photo_path is not None:
+            normalized_photo = str(photo_path).strip()
+            if normalized_photo:
+                source = Path(normalized_photo)
+                if not source.exists() or not source.is_file():
+                    raise RuntimeError(f"Файл фото не найден: {source}")
+                uploaded = await self._client.upload_file(str(source))
+                await self._client(functions.photos.UploadProfilePhotoRequest(file=uploaded))
+        return await self.get_profile()
 
-    async def get_profile(self) -> dict[str, str]:
+    async def get_profile(self) -> dict[str, str | bool]:
         if not self._client:
             raise RuntimeError("Клиент не подключён")
         me = await self._client.get_me()
+        full = await self._client(functions.users.GetFullUserRequest("me"))
+        user_full = getattr(full, "full_user", None)
+        profile_photo = getattr(user_full, "profile_photo", None)
         return {
             "first_name": me.first_name or "",
             "last_name": me.last_name or "",
             "username": me.username or "",
+            "about": getattr(user_full, "about", "") or "",
+            "has_photo": bool(profile_photo),
         }
 
     @property
