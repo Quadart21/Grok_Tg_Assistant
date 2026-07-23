@@ -255,9 +255,12 @@ class TelegramAccountClient:
             )
         if username is not None:
             normalized = username.lstrip("@").strip()
-            await self._client(
-                functions.account.UpdateUsernameRequest(username=normalized)
-            )
+            try:
+                await self._client(
+                    functions.account.UpdateUsernameRequest(username=normalized)
+                )
+            except UsernameNotModifiedError:
+                pass
         if photo_path is not None:
             normalized_photo = str(photo_path).strip()
             if normalized_photo:
