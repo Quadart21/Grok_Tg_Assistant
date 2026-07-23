@@ -53,6 +53,16 @@ class AccountBinding:
     proxy_port: int = 0
     proxy_username: str = ""
     proxy_password: str = ""
+    auto_photo_enabled: bool = False
+    photo_rotation_hours: int = 78
+    photo_library_dir: str = ""
+    last_photo_at: str = ""
+    last_photo_path: str = ""
+    auto_about_enabled: bool = False
+    about_rotation_hours: int = 78
+    about_topic: str = ""
+    last_about_at: str = ""
+    last_about_text: str = ""
     updated_at: str = ""
 
     def to_proxy(self) -> ProxyConfig | None:
@@ -92,6 +102,16 @@ class AccountBinding:
             "proxy_port": self.proxy_port,
             "proxy_username": self.proxy_username,
             "proxy_password": self.proxy_password,
+            "auto_photo_enabled": self.auto_photo_enabled,
+            "photo_rotation_hours": self.photo_rotation_hours,
+            "photo_library_dir": self.photo_library_dir,
+            "last_photo_at": self.last_photo_at,
+            "last_photo_path": self.last_photo_path,
+            "auto_about_enabled": self.auto_about_enabled,
+            "about_rotation_hours": self.about_rotation_hours,
+            "about_topic": self.about_topic,
+            "last_about_at": self.last_about_at,
+            "last_about_text": self.last_about_text,
             "updated_at": self.updated_at,
         }
 
@@ -106,6 +126,16 @@ class AccountBinding:
             proxy_port=int(data.get("proxy_port", 0)),
             proxy_username=str(data.get("proxy_username", "")),
             proxy_password=str(data.get("proxy_password", "")),
+            auto_photo_enabled=bool(data.get("auto_photo_enabled", False)),
+            photo_rotation_hours=int(data.get("photo_rotation_hours", 78) or 78),
+            photo_library_dir=str(data.get("photo_library_dir", "")),
+            last_photo_at=str(data.get("last_photo_at", "")),
+            last_photo_path=str(data.get("last_photo_path", "")),
+            auto_about_enabled=bool(data.get("auto_about_enabled", False)),
+            about_rotation_hours=int(data.get("about_rotation_hours", 78) or 78),
+            about_topic=str(data.get("about_topic", "")),
+            last_about_at=str(data.get("last_about_at", "")),
+            last_about_text=str(data.get("last_about_text", "")),
             updated_at=str(data.get("updated_at", "")),
         )
 
@@ -317,6 +347,7 @@ class StateStore:
         self.accounts: dict[str, AccountBinding] = {}
         self.dialogs: dict[str, DialogRecord] = {}
         self.group_session: GroupSessionRecord | None = None
+        self.profile_photo_assignments: dict[str, str] = {}
         self.load()
 
     def load(self) -> None:
@@ -331,12 +362,19 @@ class StateStore:
             }
             gs = data.get("group_session")
             self.group_session = GroupSessionRecord.from_dict(gs) if isinstance(gs, dict) else None
+            assignments = data.get("profile_photo_assignments", {})
+            self.profile_photo_assignments = {
+                str(path): str(acc_id)
+                for path, acc_id in assignments.items()
+                if str(path).strip() and str(acc_id).strip()
+            }
 
     def _payload(self) -> dict:
         return {
             "accounts": {acc_id: b.to_dict() for acc_id, b in self.accounts.items()},
             "dialogs": {key: d.to_dict() for key, d in self.dialogs.items()},
             "group_session": self.group_session.to_dict() if self.group_session else None,
+            "profile_photo_assignments": self.profile_photo_assignments,
         }
 
     def save(self) -> None:
@@ -403,6 +441,37 @@ class StateStore:
             self.accounts[account_id] = binding
             self.save()
             return binding
+
+    def update_account_binding(self, binding: AccountBinding) -> AccountBinding:
+        with self._lock:
+            binding.updated_at = _now_iso()
+            self.accounts[binding.account_id] = binding
+            self.save()
+            return binding
+
+    def claim_profile_photo(self, account_id: str, photo_path: str) -> None:
+        with self._lock:
+            for path, current_account_id in list(self.profile_photo_assignments.items()):
+                if current_account_id == account_id:
+                    del self.profile_photo_assignments[path]
+            self.profile_photo_assignments[photo_path] = account_id
+            self.save()
+
+    def find_available_profile_photo(self, account_id: str, candidates: list[str]) -> str:
+        with self._lock:
+            current_photo = next(
+                (path for path, current_account_id in self.profile_photo_assignments.items() if current_account_id == account_id),
+                "",
+            )
+            for path in candidates:
+                owner = self.profile_photo_assignments.get(path, "")
+                if not owner or owner == account_id:
+                    if current_photo and path == current_photo and len(candidates) > 1:
+                        continue
+                    return path
+            if current_photo:
+                return current_photo
+            raise ValueError("Нет доступных уникальных фото для назначения")
 
     def get_dialog(self, account_id: str, target_username: str) -> DialogRecord | None:
         with self._lock:

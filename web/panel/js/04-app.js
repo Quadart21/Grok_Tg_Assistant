@@ -644,13 +644,30 @@ P.clearSessionProfileForm = function(msg = "") {
     "#sessionProfileUsername",
     "#sessionProfileAbout",
     "#sessionProfilePhotoPath",
+    "#sessionPhotoRotationHours",
+    "#sessionPhotoLibraryDir",
+    "#sessionAboutRotationHours",
+    "#sessionAboutTopic",
   ].forEach((selector) => {
     const el = P.$(selector);
     if (!el) return;
     el.value = "";
     el.disabled = !hasAccount;
   });
+  [
+    "#sessionAutoPhotoEnabled",
+    "#sessionAutoAboutEnabled",
+  ].forEach((selector) => {
+    const el = P.$(selector);
+    if (!el) return;
+    el.checked = false;
+    el.disabled = !hasAccount;
+  });
+  if (P.$("#sessionPhotoRotationHours")) P.$("#sessionPhotoRotationHours").value = 78;
+  if (P.$("#sessionAboutRotationHours")) P.$("#sessionAboutRotationHours").value = 78;
   if (P.$("#btnReloadSessionProfile")) P.$("#btnReloadSessionProfile").disabled = !hasAccount;
+  if (P.$("#btnRotateSessionPhotoNow")) P.$("#btnRotateSessionPhotoNow").disabled = !hasAccount;
+  if (P.$("#btnRefreshSessionAboutNow")) P.$("#btnRefreshSessionAboutNow").disabled = !hasAccount;
   if (P.$("#btnSaveSessionProfile")) P.$("#btnSaveSessionProfile").disabled = !hasAccount;
   if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = msg;
 }
@@ -661,6 +678,12 @@ P.fillSessionProfileForm = function(profile) {
   if (P.$("#sessionProfileUsername")) P.$("#sessionProfileUsername").value = profile.username || "";
   if (P.$("#sessionProfileAbout")) P.$("#sessionProfileAbout").value = profile.about || "";
   if (P.$("#sessionProfilePhotoPath")) P.$("#sessionProfilePhotoPath").value = "";
+  if (P.$("#sessionAutoPhotoEnabled")) P.$("#sessionAutoPhotoEnabled").checked = Boolean(profile.auto_photo_enabled);
+  if (P.$("#sessionPhotoRotationHours")) P.$("#sessionPhotoRotationHours").value = profile.photo_rotation_hours || 78;
+  if (P.$("#sessionPhotoLibraryDir")) P.$("#sessionPhotoLibraryDir").value = profile.photo_library_dir || "";
+  if (P.$("#sessionAutoAboutEnabled")) P.$("#sessionAutoAboutEnabled").checked = Boolean(profile.auto_about_enabled);
+  if (P.$("#sessionAboutRotationHours")) P.$("#sessionAboutRotationHours").value = profile.about_rotation_hours || 78;
+  if (P.$("#sessionAboutTopic")) P.$("#sessionAboutTopic").value = profile.about_topic || "";
   if (P.$("#sessionProfileMsg")) {
     P.$("#sessionProfileMsg").textContent = profile.has_photo ? "Профиль загружен. У аккаунта уже есть фото." : "Профиль загружен.";
   }
@@ -694,6 +717,12 @@ P.saveSessionProfile = async function() {
         username: P.$("#sessionProfileUsername")?.value || "",
         about: P.$("#sessionProfileAbout")?.value || "",
         photo_path: P.$("#sessionProfilePhotoPath")?.value || "",
+        auto_photo_enabled: Boolean(P.$("#sessionAutoPhotoEnabled")?.checked),
+        photo_rotation_hours: Number(P.$("#sessionPhotoRotationHours")?.value || 78),
+        photo_library_dir: P.$("#sessionPhotoLibraryDir")?.value || "",
+        auto_about_enabled: Boolean(P.$("#sessionAutoAboutEnabled")?.checked),
+        about_rotation_hours: Number(P.$("#sessionAboutRotationHours")?.value || 78),
+        about_topic: P.$("#sessionAboutTopic")?.value || "",
       }),
     });
     if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = "Профиль сохранён";
@@ -701,6 +730,38 @@ P.saveSessionProfile = async function() {
     await P.loadSessionProfile(accountId);
   } catch (e) {
     if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = e.message || "Не удалось сохранить профиль";
+  }
+}
+
+P.rotateSessionPhotoNow = async function() {
+  const accountId = P.state.selectedAccount;
+  if (!accountId) return;
+  if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = "Смена фото...";
+  try {
+    const result = await P.api(`/api/accounts/${encodeURIComponent(accountId)}/profile/rotate-photo`, {
+      method: "POST",
+    });
+    if (result?.profile) P.fillSessionProfileForm(result.profile);
+    if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = "Фото профиля обновлено";
+    await P.loadAccounts();
+  } catch (e) {
+    if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = e.message || "Не удалось сменить фото";
+  }
+}
+
+P.refreshSessionAboutNow = async function() {
+  const accountId = P.state.selectedAccount;
+  if (!accountId) return;
+  if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = "Обновление about...";
+  try {
+    const result = await P.api(`/api/accounts/${encodeURIComponent(accountId)}/profile/refresh-about`, {
+      method: "POST",
+    });
+    if (result?.profile) P.fillSessionProfileForm(result.profile);
+    if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = "About обновлён";
+    await P.loadAccounts();
+  } catch (e) {
+    if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = e.message || "Не удалось обновить about";
   }
 }
 
@@ -1336,6 +1397,14 @@ P.$("#btnClearProxy").onclick = async () => {
 
 P.$("#btnReloadSessionProfile")?.addEventListener("click", async () => {
   await P.loadSessionProfile(P.state.selectedAccount);
+});
+
+P.$("#btnRotateSessionPhotoNow")?.addEventListener("click", async () => {
+  await P.rotateSessionPhotoNow();
+});
+
+P.$("#btnRefreshSessionAboutNow")?.addEventListener("click", async () => {
+  await P.refreshSessionAboutNow();
 });
 
 P.$("#btnSaveSessionProfile")?.addEventListener("click", async () => {

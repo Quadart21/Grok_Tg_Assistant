@@ -565,13 +565,30 @@ function clearSessionProfileForm(msg = "") {
     "#sessionProfileUsername",
     "#sessionProfileAbout",
     "#sessionProfilePhotoPath",
+    "#sessionPhotoRotationHours",
+    "#sessionPhotoLibraryDir",
+    "#sessionAboutRotationHours",
+    "#sessionAboutTopic",
   ].forEach((selector) => {
     const el = $(selector);
     if (!el) return;
     el.value = "";
     el.disabled = !hasAccount;
   });
+  [
+    "#sessionAutoPhotoEnabled",
+    "#sessionAutoAboutEnabled",
+  ].forEach((selector) => {
+    const el = $(selector);
+    if (!el) return;
+    el.checked = false;
+    el.disabled = !hasAccount;
+  });
+  if ($("#sessionPhotoRotationHours")) $("#sessionPhotoRotationHours").value = 78;
+  if ($("#sessionAboutRotationHours")) $("#sessionAboutRotationHours").value = 78;
   if ($("#btnReloadSessionProfile")) $("#btnReloadSessionProfile").disabled = !hasAccount;
+  if ($("#btnRotateSessionPhotoNow")) $("#btnRotateSessionPhotoNow").disabled = !hasAccount;
+  if ($("#btnRefreshSessionAboutNow")) $("#btnRefreshSessionAboutNow").disabled = !hasAccount;
   if ($("#btnSaveSessionProfile")) $("#btnSaveSessionProfile").disabled = !hasAccount;
   if ($("#sessionProfileMsg")) $("#sessionProfileMsg").textContent = msg;
 }
@@ -582,6 +599,12 @@ function fillSessionProfileForm(profile) {
   if ($("#sessionProfileUsername")) $("#sessionProfileUsername").value = profile.username || "";
   if ($("#sessionProfileAbout")) $("#sessionProfileAbout").value = profile.about || "";
   if ($("#sessionProfilePhotoPath")) $("#sessionProfilePhotoPath").value = "";
+  if ($("#sessionAutoPhotoEnabled")) $("#sessionAutoPhotoEnabled").checked = Boolean(profile.auto_photo_enabled);
+  if ($("#sessionPhotoRotationHours")) $("#sessionPhotoRotationHours").value = profile.photo_rotation_hours || 78;
+  if ($("#sessionPhotoLibraryDir")) $("#sessionPhotoLibraryDir").value = profile.photo_library_dir || "";
+  if ($("#sessionAutoAboutEnabled")) $("#sessionAutoAboutEnabled").checked = Boolean(profile.auto_about_enabled);
+  if ($("#sessionAboutRotationHours")) $("#sessionAboutRotationHours").value = profile.about_rotation_hours || 78;
+  if ($("#sessionAboutTopic")) $("#sessionAboutTopic").value = profile.about_topic || "";
   if ($("#sessionProfileMsg")) {
     $("#sessionProfileMsg").textContent = profile.has_photo ? "Профиль загружен. У аккаунта уже есть фото." : "Профиль загружен.";
   }
@@ -615,6 +638,12 @@ async function saveSessionProfile() {
         username: $("#sessionProfileUsername")?.value || "",
         about: $("#sessionProfileAbout")?.value || "",
         photo_path: $("#sessionProfilePhotoPath")?.value || "",
+        auto_photo_enabled: Boolean($("#sessionAutoPhotoEnabled")?.checked),
+        photo_rotation_hours: Number($("#sessionPhotoRotationHours")?.value || 78),
+        photo_library_dir: $("#sessionPhotoLibraryDir")?.value || "",
+        auto_about_enabled: Boolean($("#sessionAutoAboutEnabled")?.checked),
+        about_rotation_hours: Number($("#sessionAboutRotationHours")?.value || 78),
+        about_topic: $("#sessionAboutTopic")?.value || "",
       }),
     });
     if ($("#sessionProfileMsg")) $("#sessionProfileMsg").textContent = "Профиль сохранён";
@@ -622,6 +651,38 @@ async function saveSessionProfile() {
     await loadSessionProfile(accountId);
   } catch (e) {
     if ($("#sessionProfileMsg")) $("#sessionProfileMsg").textContent = e.message || "Не удалось сохранить профиль";
+  }
+}
+
+async function rotateSessionPhotoNow() {
+  const accountId = state.selectedAccount;
+  if (!accountId) return;
+  if ($("#sessionProfileMsg")) $("#sessionProfileMsg").textContent = "Смена фото...";
+  try {
+    const result = await api(`/api/accounts/${encodeURIComponent(accountId)}/profile/rotate-photo`, {
+      method: "POST",
+    });
+    if (result?.profile) fillSessionProfileForm(result.profile);
+    if ($("#sessionProfileMsg")) $("#sessionProfileMsg").textContent = "Фото профиля обновлено";
+    await loadAccounts();
+  } catch (e) {
+    if ($("#sessionProfileMsg")) $("#sessionProfileMsg").textContent = e.message || "Не удалось сменить фото";
+  }
+}
+
+async function refreshSessionAboutNow() {
+  const accountId = state.selectedAccount;
+  if (!accountId) return;
+  if ($("#sessionProfileMsg")) $("#sessionProfileMsg").textContent = "Обновление about...";
+  try {
+    const result = await api(`/api/accounts/${encodeURIComponent(accountId)}/profile/refresh-about`, {
+      method: "POST",
+    });
+    if (result?.profile) fillSessionProfileForm(result.profile);
+    if ($("#sessionProfileMsg")) $("#sessionProfileMsg").textContent = "About обновлён";
+    await loadAccounts();
+  } catch (e) {
+    if ($("#sessionProfileMsg")) $("#sessionProfileMsg").textContent = e.message || "Не удалось обновить about";
   }
 }
 
@@ -1259,6 +1320,14 @@ $("#btnClearProxy").onclick = async () => {
 
 $("#btnReloadSessionProfile")?.addEventListener("click", async () => {
   await loadSessionProfile(selectedAccount);
+});
+
+$("#btnRotateSessionPhotoNow")?.addEventListener("click", async () => {
+  await rotateSessionPhotoNow();
+});
+
+$("#btnRefreshSessionAboutNow")?.addEventListener("click", async () => {
+  await refreshSessionAboutNow();
 });
 
 $("#btnSaveSessionProfile")?.addEventListener("click", async () => {

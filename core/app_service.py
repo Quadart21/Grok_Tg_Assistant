@@ -6,6 +6,7 @@ import asyncio
 import threading
 from collections import deque
 from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +56,7 @@ from core.tdata_converter import (
     verify_converted_session,
 )
 from core.profile_generator import generate_profile, preview_profiles
-from core.state_store import GroupSessionRecord, StateStore
+from core.state_store import AccountBinding, GroupSessionRecord, StateStore
 from core.telegram_client import TelegramAccountClient, format_telegram_error
 
 
@@ -99,6 +100,13 @@ class AppService:
         self._outreach_account_ids: set[str] = set()
         self._group_chat_account_ids: set[str] = set()
         self._lock = threading.Lock()
+        self._profile_scheduler_stop = threading.Event()
+        self._profile_scheduler_thread = threading.Thread(
+            target=self._profile_scheduler_loop,
+            daemon=True,
+            name="profile-scheduler",
+        )
+        self._profile_scheduler_thread.start()
 
     def _load_config(self) -> AppConfig:
         if not self.config_path.exists():
@@ -125,6 +133,256 @@ class AppService:
 
     def log(self, message: str) -> None:
         self._logs.append(message)
+
+    def _now_utc(self) -> datetime:
+        return datetime.now(timezone.utc)
+
+    def _parse_iso_dt(self, value: str) -> datetime | None:
+        raw = (value or "").strip()
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    def _resolve_profile_library_dir(self, raw_dir: str) -> Path:
+        folder = (raw_dir or "").strip()
+        if not folder:
+            raise ValueError("Укажите папку с фото внутри проекта")
+        candidate = (self.base_dir / folder).resolve() if not Path(folder).is_absolute() else Path(folder).resolve()
+        base = self.base_dir.resolve()
+        try:
+            candidate.relative_to(base)
+        except ValueError as exc:
+            raise ValueError("Папка с фото должна находиться внутри проекта") from exc
+        if not candidate.exists() or not candidate.is_dir():
+            raise ValueError("Папка с фото не найдена")
+        return candidate
+
+    def _list_profile_photo_candidates(self, raw_dir: str) -> list[str]:
+        folder = self._resolve_profile_library_dir(raw_dir)
+        allowed = {".jpg", ".jpeg", ".png", ".webp"}
+        return sorted(
+            str(path)
+            for path in folder.iterdir()
+            if path.is_file() and path.suffix.lower() in allowed
+        )
+
+    def _profile_rotation_due(self, last_ts: str, every_hours: int) -> bool:
+        interval = max(int(every_hours or 0), 1)
+        last_dt = self._parse_iso_dt(last_ts)
+        if last_dt is None:
+            return True
+        return self._now_utc() >= last_dt + timedelta(hours=interval)
+
+    def _clean_profile_text(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
+
+    def _get_session_for_account(self, account_id: str):
+        sessions = {s.account_id: s for s in discover_sessions(self.base_dir / self.config.sessions_dir)}
+        session = sessions.get(account_id)
+        if not session:
+            raise ValueError("Сессия не найдена в папке sessions")
+        return session
+
+    def _run_account_profile_update(self, account_id: str, *, first_name: Any = None, last_name: Any = None, username: Any = None, about: Any = None, photo_path: Any = None) -> dict[str, Any]:
+        if not self.config.telegram_api_id or not self.config.telegram_api_hash:
+            raise ValueError("Сначала заполните Telegram API ID и Hash")
+        account = next((acc for acc in self.get_accounts() if acc["id"] == account_id), None)
+        if not account:
+            raise ValueError("Аккаунт не найден")
+        if not account.get("session_ready"):
+            raise ValueError("Для аккаунта нет рабочего .session")
+
+        session = self._get_session_for_account(account_id)
+        proxies = load_proxies(self.proxies_path)
+        proxy = self._proxy_for_account(account_id, proxies)
+        pwd = read_twofa_password(session, self.config.telegram_2fa_password)
+        client = TelegramAccountClient(
+            session,
+            self.config.telegram_api_id,
+            self.config.telegram_api_hash,
+            proxy,
+            pwd,
+        )
+
+        async def run_one() -> dict[str, Any]:
+            await client.connect()
+            try:
+                return await client.update_profile(
+                    first_name=self._clean_profile_text(first_name),
+                    last_name=self._clean_profile_text(last_name),
+                    username=self._clean_profile_text(username),
+                    about=self._clean_profile_text(about),
+                    photo_path=self._clean_profile_text(photo_path),
+                )
+            finally:
+                await client.disconnect()
+
+        loop = asyncio.new_event_loop()
+        try:
+            profile = loop.run_until_complete(run_one())
+        finally:
+            loop.close()
+
+        self.state_store.load()
+        binding = self.state_store.get_account_binding(account_id) or AccountBinding(account_id=account_id)
+        profile.update(self._build_profile_automation_payload(binding))
+        return profile
+
+    def _build_profile_automation_payload(self, binding: AccountBinding) -> dict[str, Any]:
+        return {
+            "auto_photo_enabled": binding.auto_photo_enabled,
+            "photo_rotation_hours": binding.photo_rotation_hours,
+            "photo_library_dir": binding.photo_library_dir,
+            "last_photo_at": binding.last_photo_at,
+            "last_photo_path": binding.last_photo_path,
+            "auto_about_enabled": binding.auto_about_enabled,
+            "about_rotation_hours": binding.about_rotation_hours,
+            "about_topic": binding.about_topic,
+            "last_about_at": binding.last_about_at,
+            "last_about_text": binding.last_about_text,
+        }
+
+    def _update_account_automation_settings(self, account_id: str, data: dict[str, Any]) -> AccountBinding:
+        self.state_store.load()
+        current = self.state_store.get_account_binding(account_id)
+        if current is None:
+            proxy = self._proxy_for_account(account_id, load_proxies(self.proxies_path))
+            current = AccountBinding.from_proxy(account_id, proxy, self.roles.prompt_for_account(account_id), self._role_label(account_id))
+        current.auto_photo_enabled = bool(data.get("auto_photo_enabled", current.auto_photo_enabled))
+        current.photo_rotation_hours = max(int(data.get("photo_rotation_hours", current.photo_rotation_hours) or 78), 1)
+        current.photo_library_dir = str(data.get("photo_library_dir", current.photo_library_dir or "")).strip()
+        current.auto_about_enabled = bool(data.get("auto_about_enabled", current.auto_about_enabled))
+        current.about_rotation_hours = max(int(data.get("about_rotation_hours", current.about_rotation_hours) or 78), 1)
+        current.about_topic = str(data.get("about_topic", current.about_topic or "")).strip()
+        return self.state_store.update_account_binding(current)
+
+    def _generate_about_text(self, topic: str, account_id: str) -> str:
+        if not self.config.llm_configured():
+            raise ValueError("Для автосмены about нужно настроить LLM")
+        llm = create_llm_client(self.config, DialogSettings(), MasterPromptConfig())
+        system = (
+            "Сгенерируй короткое Telegram about на русском языке. "
+            "Максимум 70 символов. Без кавычек, эмодзи, хештегов и пояснений."
+        )
+        user = (
+            f"Тематика: {topic.strip()}\n"
+            f"Аккаунт: {account_id}\n"
+            "Нужна 1 короткая строка для поля 'О себе'."
+        )
+
+        async def run_one() -> str:
+            return await llm._complete(system, [{"role": "user", "content": user}], temp=0.8, max_tokens=80)
+
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(run_one()).strip()
+        finally:
+            loop.close()
+
+    def _process_profile_automation_for_account(self, account: dict[str, Any], binding: AccountBinding) -> None:
+        account_id = account["id"]
+        changed = False
+
+        if binding.auto_photo_enabled:
+            if not binding.photo_library_dir:
+                raise ValueError("Не указана папка с фото для автосмены")
+            if self._profile_rotation_due(binding.last_photo_at, binding.photo_rotation_hours):
+                candidates = self._list_profile_photo_candidates(binding.photo_library_dir)
+                if not candidates:
+                    raise ValueError("В папке автосмены фото нет подходящих изображений")
+                next_photo = self.state_store.find_available_profile_photo(account_id, candidates)
+                self._run_account_profile_update(account_id, photo_path=next_photo)
+                binding.last_photo_at = self._now_utc().isoformat()
+                binding.last_photo_path = next_photo
+                self.state_store.claim_profile_photo(account_id, next_photo)
+                changed = True
+                self.log(f"↻ Фото профиля обновлено для {account_id}: {Path(next_photo).name}")
+
+        if binding.auto_about_enabled:
+            if not binding.about_topic:
+                raise ValueError("Не задана тема для автосмены about")
+            if self._profile_rotation_due(binding.last_about_at, binding.about_rotation_hours):
+                next_about = self._generate_about_text(binding.about_topic, account_id)
+                self._run_account_profile_update(account_id, about=next_about)
+                binding.last_about_at = self._now_utc().isoformat()
+                binding.last_about_text = next_about
+                changed = True
+                self.log(f"↻ About обновлён для {account_id}")
+
+        if changed:
+            self.state_store.update_account_binding(binding)
+
+    def _get_account_binding_for_automation(self, account_id: str) -> tuple[dict[str, Any], AccountBinding]:
+        account = next((acc for acc in self.get_accounts() if acc["id"] == account_id), None)
+        if not account:
+            raise ValueError("Аккаунт не найден")
+        if not account.get("session_ready"):
+            raise ValueError("Для аккаунта нет рабочего .session")
+        self.state_store.load()
+        binding = self.state_store.get_account_binding(account_id)
+        if binding is None:
+            raise ValueError("Сначала сохраните настройки автосмены для этой сессии")
+        return account, binding
+
+    def rotate_account_profile_photo_now(self, account_id: str) -> dict[str, Any]:
+        account, binding = self._get_account_binding_for_automation(account_id)
+        if not binding.auto_photo_enabled:
+            raise ValueError("Автосмена фото выключена")
+        if not binding.photo_library_dir:
+            raise ValueError("Не указана папка с фото для автосмены")
+        candidates = self._list_profile_photo_candidates(binding.photo_library_dir)
+        if not candidates:
+            raise ValueError("В папке автосмены фото нет подходящих изображений")
+        next_photo = self.state_store.find_available_profile_photo(account_id, candidates)
+        profile = self._run_account_profile_update(account_id, photo_path=next_photo)
+        binding.last_photo_at = self._now_utc().isoformat()
+        binding.last_photo_path = next_photo
+        self.state_store.claim_profile_photo(account_id, next_photo)
+        binding = self.state_store.update_account_binding(binding)
+        profile.update(self._build_profile_automation_payload(binding))
+        self.log(f"↻ Фото профиля обновлено вручную для {account['id']}: {Path(next_photo).name}")
+        return {"ok": True, "profile": profile}
+
+    def refresh_account_about_now(self, account_id: str) -> dict[str, Any]:
+        account, binding = self._get_account_binding_for_automation(account_id)
+        if not binding.auto_about_enabled:
+            raise ValueError("Автообновление about выключено")
+        if not binding.about_topic:
+            raise ValueError("Не задана тема для автосмены about")
+        next_about = self._generate_about_text(binding.about_topic, account_id)
+        profile = self._run_account_profile_update(account_id, about=next_about)
+        binding.last_about_at = self._now_utc().isoformat()
+        binding.last_about_text = next_about
+        binding = self.state_store.update_account_binding(binding)
+        profile.update(self._build_profile_automation_payload(binding))
+        self.log(f"↻ About обновлён вручную для {account['id']}")
+        return {"ok": True, "profile": profile}
+
+    def _profile_scheduler_loop(self) -> None:
+        while not self._profile_scheduler_stop.wait(60):
+            try:
+                self.state_store.load()
+                accounts = self.get_accounts()
+                for account in accounts:
+                    if not account.get("session_ready"):
+                        continue
+                    binding = self.state_store.get_account_binding(account["id"])
+                    if not binding:
+                        continue
+                    if not binding.auto_photo_enabled and not binding.auto_about_enabled:
+                        continue
+                    try:
+                        self._process_profile_automation_for_account(account, binding)
+                    except Exception as exc:
+                        self.log(f"⚠ Автопрофиль {account['id']}: {exc}")
+            except Exception as exc:
+                self.log(f"⚠ Планировщик профиля: {exc}")
 
     def get_logs(self, since: int = 0) -> list[str]:
         logs = list(self._logs)
@@ -871,6 +1129,37 @@ class AppService:
             return loop.run_until_complete(run_one())
         finally:
             loop.close()
+
+    def update_account_profile(self, account_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        if not self.config.telegram_api_id or not self.config.telegram_api_hash:
+            raise ValueError("Ð¡Ð½Ð°Ñ‡Ð°Ð»Ð° Ð·Ð°Ð¿Ð¾Ð»Ð½Ð¸Ñ‚Ðµ Telegram API ID Ð¸ Hash")
+        account = next((acc for acc in self.get_accounts() if acc["id"] == account_id), None)
+        if not account:
+            raise ValueError("ÐÐºÐºÐ°ÑƒÐ½Ñ‚ Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½")
+        if not account.get("session_ready"):
+            raise ValueError("Ð”Ð»Ñ Ð°ÐºÐºÐ°ÑƒÐ½Ñ‚Ð° Ð½ÐµÑ‚ Ñ€Ð°Ð±Ð¾Ñ‡ÐµÐ³Ð¾ .session")
+
+        if bool(data.get("auto_photo_enabled")):
+            library_dir = str(data.get("photo_library_dir") or "").strip()
+            if not library_dir:
+                raise ValueError("Ð£ÐºÐ°Ð¶Ð¸Ñ‚Ðµ Ð¿Ð°Ð¿ÐºÑƒ Ñ Ñ„Ð¾Ñ‚Ð¾ Ð´Ð»Ñ Ð°Ð²Ñ‚Ð¾ÑÐ¼ÐµÐ½Ñ‹")
+            candidates = self._list_profile_photo_candidates(library_dir)
+            if not candidates:
+                raise ValueError("Ð’ ÑƒÐºÐ°Ð·Ð°Ð½Ð½Ð¾Ð¹ Ð¿Ð°Ð¿ÐºÐµ Ð½ÐµÑ‚ Ð¿Ð¾Ð´Ñ…Ð¾Ð´ÑÑ‰Ð¸Ñ… Ð¸Ð·Ð¾Ð±Ñ€Ð°Ð¶ÐµÐ½Ð¸Ð¹")
+        if bool(data.get("auto_about_enabled")) and not str(data.get("about_topic") or "").strip():
+            raise ValueError("Ð£ÐºÐ°Ð¶Ð¸Ñ‚Ðµ Ñ‚ÐµÐ¼Ñƒ Ð´Ð»Ñ Ð°Ð²Ñ‚Ð¾Ð¾Ð±Ð½Ð¾Ð²Ð»ÐµÐ½Ð¸Ñ Ð¾ ÑÐµÐ±Ðµ")
+
+        result = self._run_account_profile_update(
+            account_id,
+            first_name=data.get("first_name"),
+            last_name=data.get("last_name"),
+            username=data.get("username"),
+            about=data.get("about"),
+            photo_path=data.get("photo_path"),
+        )
+        binding = self._update_account_automation_settings(account_id, data)
+        result["profile"].update(self._build_profile_automation_payload(binding))
+        return result
 
     def get_roles_dict(self) -> dict[str, Any]:
         self.roles = RolesConfig.load(self.roles_path)

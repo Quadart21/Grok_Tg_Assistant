@@ -61,3 +61,17 @@ def register(app: FastAPI, service: AppService) -> None:
             return service.update_account_profile(account_id, body.model_dump())
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/accounts/{account_id}/profile/rotate-photo")
+    def api_rotate_account_photo(account_id: str) -> dict:
+        try:
+            return service.rotate_account_profile_photo_now(account_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/accounts/{account_id}/profile/refresh-about")
+    def api_refresh_account_about(account_id: str) -> dict:
+        try:
+            return service.refresh_account_about_now(account_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc

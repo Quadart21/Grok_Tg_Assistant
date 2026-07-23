@@ -1,6 +1,6 @@
 # Grok TG Assistant
 
-[![Version](https://img.shields.io/badge/version-1.3.1-22d3ee?style=for-the-badge)](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.3.1)
+[![Version](https://img.shields.io/badge/version-1.4.0-22d3ee?style=for-the-badge)](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.4.0)
 [![Python](https://img.shields.io/badge/python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-a78bfa?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-34d399?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/Quadart21/Grok_Tg_Assistant)
@@ -84,6 +84,7 @@ Grok_Tg_Assistant/
 
 | Версия | Дата | Описание |
 |--------|------|----------|
+| [**v1.4.0**](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.4.0) | 23.07.2026 | Реестр сессий упрощен под рабочий сценарий, добавлены автосмена фото и AI-обновление `about` по расписанию, а также ручной запуск обеих операций |
 | [**v1.3.1**](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.3.1) | 23.07.2026 | Для группового чата добавлен debug-режим с очень быстрым темпом: 5-10 секунд между сообщениями для отладки |
 | [**v1.3.0**](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.3.0) | 21.07.2026 | Групповой чат получил персональные расписания сессий, дружеские связи между аккаунтами, возврат в диалог по истории и thread-aware reply-логику |
 | [**v1.2.2**](https://github.com/Quadart21/Grok_Tg_Assistant/releases/tag/v1.2.2) | 21.07.2026 | Интерфейс группового чата разбит на отдельные подразделы: состав, роли, площадка, сцена, автопилот и стиль |

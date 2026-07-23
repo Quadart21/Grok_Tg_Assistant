@@ -145,87 +145,27 @@
           <div class="row-between" style="width:100%">
             <div>
               <h2>Аккаунты</h2>
-              <p class="lead">Операционная витрина по сессиям: здоровье, конвертация, привязка прокси и быстрая работа с выбранным аккаунтом. Папка: <code id="sessionsPath">sessions/</code></p>
+              <p class="lead">Реестр сессий с быстрым выбором, фильтрами и рабочей карточкой выбранного аккаунта. Папка: <code id="sessionsPath">sessions/</code></p>
             </div>
             <button class="btn ghost" id="btnRefreshAccounts">↻ Обновить</button>
           </div>
         </header>
 
         <div class="page-grid">
-          <div class="summary-strip" id="accountsSummary">
-            <div class="summary-card">
-              <span class="summary-label">Всего сессий</span>
-              <strong class="summary-value">0</strong>
-              <span class="summary-note">Загрузка...</span>
-            </div>
-          </div>
-
-          <div class="dispatch-grid">
-            <div class="card card-green card-nested">
-              <div class="section-block-heading">
-                <div>
-                  <h3>Конвертер tdata → .session</h3>
-                  <p class="hint">Нужны API ID/Hash. 2FA можно брать из <code>twoFA.txt</code> или из общего пароля в разделе подключения.</p>
-                </div>
-              </div>
-              <div class="btn-row">
-                <button class="btn primary" id="btnConvertSelected">Конвертировать выбранные</button>
-                <button class="btn ghost" id="btnConvertAll">Конвертировать все tdata</button>
-              </div>
-              <p id="convertMsg" class="msg"></p>
-            </div>
-
-            <div class="card card-purple card-nested">
-              <div class="section-block-heading">
-                <div>
-                  <h3>Массовая смена профиля</h3>
-                  <p class="hint">Работает по отмеченным аккаунтам. Генерация оставлена простой: шаблоны, имена или ники.</p>
-                </div>
-              </div>
-              <label class="label">Режим</label>
-              <select id="profileGenerateMode">
-                <option value="manual">Вручную (шаблоны)</option>
-                <option value="names">Случайные имя + фамилия</option>
-                <option value="nicks">Случайный ник (вместо имени)</option>
-              </select>
-              <div id="profileManualBlock">
-                <p class="hint">Шаблоны: <code>{n}</code>, <code>{id}</code></p>
-                <div class="profile-fields">
-                  <label class="label inline-check"><input type="checkbox" id="profileChangeFirst"> Имя</label>
-                  <input type="text" id="profileFirstName" placeholder="Anna">
-                  <label class="label inline-check"><input type="checkbox" id="profileChangeLast"> Фамилия</label>
-                  <input type="text" id="profileLastName" placeholder="Smith">
-                  <label class="label inline-check"><input type="checkbox" id="profileChangeUsername"> Username</label>
-                  <input type="text" id="profileUsername" placeholder="anna{n}">
-                </div>
-              </div>
-              <div id="profileGenerateBlock" class="hidden">
-                <label class="label">Язык</label>
-                <select id="profileLang">
-                  <option value="ru">Русский</option>
-                  <option value="en">English</option>
-                </select>
-                <label class="label inline-check"><input type="checkbox" id="profileWithUsername"> Сгенерировать username</label>
-                <div class="btn-row">
-                  <button type="button" class="btn ghost" id="btnProfilePreview">Показать примеры</button>
-                </div>
-                <pre id="profilePreviewBox" class="profile-preview hidden"></pre>
-              </div>
-              <label class="label">Пауза между аккаунтами (сек)</label>
-              <input type="number" id="profileDelay" value="3" min="2" max="60" style="max-width:6rem">
-              <div class="btn-row">
-                <button class="btn primary" id="btnBulkProfile">Применить к выбранным</button>
-              </div>
-              <p id="profileMsg" class="msg"></p>
-            </div>
-          </div>
-
           <div class="operations-shell">
             <div class="card operations-main">
               <div class="section-block-heading">
                 <div>
                   <h3>Реестр сессий</h3>
-                  <p class="hint">Слева выбор и фильтры, в строке аккаунта видно готовность, прокси и роль. Клик по строке открывает рабочую карточку справа.</p>
+                  <p class="hint">Слева выбор и фильтры. В строке видны готовность, прокси и роль. Клик по строке открывает карточку справа.</p>
+                </div>
+              </div>
+
+              <div class="summary-strip accounts-summary-strip" id="accountsSummary">
+                <div class="summary-card">
+                  <span class="summary-label">Всего сессий</span>
+                  <strong class="summary-value">0</strong>
+                  <span class="summary-note">Загрузка...</span>
                 </div>
               </div>
 
@@ -254,13 +194,76 @@
                   <tbody id="accountsTable"></tbody>
                 </table>
               </div>
+
+              <details class="inline-details accounts-extra-tools">
+                <summary>Дополнительные операции</summary>
+                <div class="dispatch-grid accounts-extra-grid">
+                  <div class="card card-green card-nested">
+                    <div class="section-block-heading">
+                      <div>
+                        <h3>Конвертер tdata → .session</h3>
+                        <p class="hint">Нужны API ID/Hash. 2FA можно брать из <code>twoFA.txt</code> или из общего пароля.</p>
+                      </div>
+                    </div>
+                    <div class="btn-row">
+                      <button class="btn primary" id="btnConvertSelected">Конвертировать выбранные</button>
+                      <button class="btn ghost" id="btnConvertAll">Конвертировать все tdata</button>
+                    </div>
+                    <p id="convertMsg" class="msg"></p>
+                  </div>
+
+                  <div class="card card-purple card-nested">
+                    <div class="section-block-heading">
+                      <div>
+                        <h3>Массовая смена профиля</h3>
+                        <p class="hint">Работает по отмеченным аккаунтам. Оставлено в свернутом виде, чтобы не перегружать реестр.</p>
+                      </div>
+                    </div>
+                    <label class="label">Режим</label>
+                    <select id="profileGenerateMode">
+                      <option value="manual">Вручную (шаблоны)</option>
+                      <option value="names">Случайные имя + фамилия</option>
+                      <option value="nicks">Случайный ник (вместо имени)</option>
+                    </select>
+                    <div id="profileManualBlock">
+                      <p class="hint">Шаблоны: <code>{n}</code>, <code>{id}</code></p>
+                      <div class="profile-fields">
+                        <label class="label inline-check"><input type="checkbox" id="profileChangeFirst"> Имя</label>
+                        <input type="text" id="profileFirstName" placeholder="Anna">
+                        <label class="label inline-check"><input type="checkbox" id="profileChangeLast"> Фамилия</label>
+                        <input type="text" id="profileLastName" placeholder="Smith">
+                        <label class="label inline-check"><input type="checkbox" id="profileChangeUsername"> Username</label>
+                        <input type="text" id="profileUsername" placeholder="anna{n}">
+                      </div>
+                    </div>
+                    <div id="profileGenerateBlock" class="hidden">
+                      <label class="label">Язык</label>
+                      <select id="profileLang">
+                        <option value="ru">Русский</option>
+                        <option value="en">English</option>
+                      </select>
+                      <label class="label inline-check"><input type="checkbox" id="profileWithUsername"> Сгенерировать username</label>
+                      <div class="btn-row">
+                        <button type="button" class="btn ghost" id="btnProfilePreview">Показать примеры</button>
+                      </div>
+                      <pre id="profilePreviewBox" class="profile-preview hidden"></pre>
+                    </div>
+                    <label class="label">Пауза между аккаунтами (сек)</label>
+                    <input type="number" id="profileDelay" value="3" min="2" max="60" style="max-width:6rem">
+                    <div class="btn-row">
+                      <button class="btn primary" id="btnBulkProfile">Применить к выбранным</button>
+                    </div>
+                    <p id="profileMsg" class="msg"></p>
+                  </div>
+                </div>
+              </details>
             </div>
 
             <aside class="card detail-card">
               <div class="detail-header">
                 <div>
                   <h3>Карточка сессии</h3>
-                  <p id="proxyAccountLabel" class="hint">Одна рабочая зона для выбранного аккаунта: статус, профиль Telegram и прокси.</p>
+                  <p id="proxyAccountLabel" class="hint">Краткая сводка, профиль Telegram и прокси для выбранного аккаунта.</p>
                 </div>
                 <span class="chip muted" id="sessionDetailBadge">нет выбора</span>
               </div>
@@ -301,9 +304,39 @@
                     <label class="label" for="sessionProfilePhotoPath">Путь к фото</label>
                     <input type="text" id="sessionProfilePhotoPath" placeholder="C:\path\photo.jpg" disabled>
                   </div>
+                  <div class="full">
+                    <label class="inline-check">
+                      <input type="checkbox" id="sessionAutoPhotoEnabled" disabled>
+                      ÐÐ²Ñ‚Ð¾ÑÐ¼ÐµÐ½Ð° Ñ„Ð¾Ñ‚Ð¾ Ð¿Ñ€Ð¾Ñ„Ð¸Ð»Ñ
+                    </label>
+                  </div>
+                  <div>
+                    <label class="label" for="sessionPhotoRotationHours">Ð˜Ð½Ñ‚ÐµÑ€Ð²Ð°Ð» Ñ„Ð¾Ñ‚Ð¾, Ñ‡Ð°ÑÑ‹</label>
+                    <input type="number" id="sessionPhotoRotationHours" min="1" step="1" value="78" disabled>
+                  </div>
+                  <div class="full">
+                    <label class="label" for="sessionPhotoLibraryDir">ÐŸÐ°Ð¿ÐºÐ° Ñ Ñ„Ð¾Ñ‚Ð¾ Ð² Ð¿Ñ€Ð¾ÐµÐºÑ‚Ðµ</label>
+                    <input type="text" id="sessionPhotoLibraryDir" placeholder="assets/profile-photos" disabled>
+                  </div>
+                  <div class="full">
+                    <label class="inline-check">
+                      <input type="checkbox" id="sessionAutoAboutEnabled" disabled>
+                      ÐÐ²Ñ‚Ð¾Ð¾Ð±Ð½Ð¾Ð²Ð»ÐµÐ½Ð¸Ðµ Ð¾ ÑÐµÐ±Ðµ
+                    </label>
+                  </div>
+                  <div>
+                    <label class="label" for="sessionAboutRotationHours">Ð˜Ð½Ñ‚ÐµÑ€Ð²Ð°Ð» about, Ñ‡Ð°ÑÑ‹</label>
+                    <input type="number" id="sessionAboutRotationHours" min="1" step="1" value="78" disabled>
+                  </div>
+                  <div class="full">
+                    <label class="label" for="sessionAboutTopic">Ð¢ÐµÐ¼Ð° Ð´Ð»Ñ Ð˜Ð˜ about</label>
+                    <input type="text" id="sessionAboutTopic" placeholder="ÐÐ°Ð¿Ñ€Ð¸Ð¼ÐµÑ€: Ð°Ð²Ñ‚Ð¾Ð¼Ð¾Ð±Ð¸Ð»ÑŒÐ½Ñ‹Ðµ Ñ†Ð¸Ñ‚Ð°Ñ‚Ñ‹" disabled>
+                  </div>
                 </div>
                 <div class="session-profile-actions">
                   <button class="btn ghost" id="btnReloadSessionProfile" disabled>↻ Загрузить профиль</button>
+                  <button class="btn ghost" id="btnRotateSessionPhotoNow" disabled>Сменить фото сейчас</button>
+                  <button class="btn ghost" id="btnRefreshSessionAboutNow" disabled>Обновить about сейчас</button>
                   <button class="btn primary" id="btnSaveSessionProfile" disabled>Сохранить профиль</button>
                 </div>
                 <p class="msg" id="sessionProfileMsg"></p>
@@ -311,7 +344,7 @@
 
               <div class="detail-section">
                 <h4>Прокси</h4>
-                <p class="hint">Можно выбрать прокси из пула или добавить новый вручную прямо отсюда.</p>
+                <p class="hint">Привязка из пула. Ручное добавление оставлено как дополнительное действие.</p>
               </div>
               <label class="label">Прокси из пула</label>
               <select id="proxyPoolSelect" disabled>

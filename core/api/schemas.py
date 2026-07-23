@@ -120,6 +120,20 @@ class MasterPromptBody(BaseModel):
     text: str = ""
 
 
+class SessionProfileBody(BaseModel):
+    first_name: str = ""
+    last_name: str = ""
+    username: str = ""
+    about: str = ""
+    photo_path: str = ""
+    auto_photo_enabled: bool = False
+    photo_rotation_hours: int = 78
+    photo_library_dir: str = ""
+    auto_about_enabled: bool = False
+    about_rotation_hours: int = 78
+    about_topic: str = ""
+
+
 class AgentBody(BaseModel):
     account_id: str = ""
     name: str = "Секретарь"
@@ -151,15 +165,6 @@ class ProfilePreviewBody(BaseModel):
     lang: str = "ru"
     with_username: bool = False
     count: int = 5
-
-
-class SessionProfileBody(BaseModel):
-    first_name: str = ""
-    last_name: str = ""
-    username: str = ""
-    about: str = ""
-    photo_path: str = ""
-
 
 class ConvertSessionsBody(BaseModel):
     account_ids: list[str] = []
