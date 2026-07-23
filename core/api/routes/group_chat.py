@@ -61,6 +61,7 @@ def register(app: FastAPI, service: AppService) -> None:
             friendships=body.friendships or {},
             extra_context=body.extra_context,
             reset_context_on_apply=body.reset_context_on_apply,
+            debug_fast_mode=body.debug_fast_mode,
             chat_title=body.chat_title,
         )
         if not ok:
@@ -83,6 +84,7 @@ def register(app: FastAPI, service: AppService) -> None:
             friendships=body.friendships or {},
             extra_context=body.extra_context,
             reset_context_on_apply=body.reset_context_on_apply,
+            debug_fast_mode=body.debug_fast_mode,
             chat_title=body.chat_title,
         )
         if not ok:

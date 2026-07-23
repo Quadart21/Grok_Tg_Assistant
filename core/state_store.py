@@ -239,6 +239,7 @@ class GroupSessionRecord:
     day_key: str = ""
     group_day_count: int = 0
     reset_context_on_apply: bool = False
+    debug_fast_mode: bool = False
     scene_revision: int = 0
 
     def to_dict(self) -> dict:
@@ -268,6 +269,7 @@ class GroupSessionRecord:
             "day_key": self.day_key,
             "group_day_count": self.group_day_count,
             "reset_context_on_apply": self.reset_context_on_apply,
+            "debug_fast_mode": self.debug_fast_mode,
             "scene_revision": self.scene_revision,
         }
 
@@ -303,6 +305,7 @@ class GroupSessionRecord:
             day_key=str(data.get("day_key", "")),
             group_day_count=int(data.get("group_day_count", 0)),
             reset_context_on_apply=bool(data.get("reset_context_on_apply", False)),
+            debug_fast_mode=bool(data.get("debug_fast_mode", False)),
             scene_revision=int(data.get("scene_revision", 0)),
         )
 

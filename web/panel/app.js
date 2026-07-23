@@ -1970,6 +1970,11 @@ function clearGroupChatScene() {
     resetToggle.checked = false;
     delete resetToggle.dataset.touched;
   }
+  const debugFastToggle = $("#groupChatDebugFastMode");
+  if (debugFastToggle) {
+    debugFastToggle.checked = false;
+    delete debugFastToggle.dataset.touched;
+  }
   const select = $("#groupChatSelect");
   if (select) {
     if (!Array.from(select.options).some((option) => option.value === "")) {
@@ -2242,6 +2247,10 @@ function syncGroupChatFromStatus(st) {
   if (resetToggle && !resetToggle.dataset.touched) {
     resetToggle.checked = !!st.reset_context_on_apply;
   }
+  const debugFastToggle = $("#groupChatDebugFastMode");
+  if (debugFastToggle && !debugFastToggle.dataset.touched) {
+    debugFastToggle.checked = !!st.debug_fast_mode;
+  }
   if (Array.isArray(st.participants)) {
     st.participants.forEach((item) => {
       if (item.weight != null) groupChatWeightOverrides.set(item.account_id, item.weight);
@@ -2325,6 +2334,7 @@ function buildGroupChatScenePayload() {
     topic,
     extra_context: $("#groupChatExtra").value,
     reset_context_on_apply: !!$("#groupChatResetContextOnApply")?.checked,
+    debug_fast_mode: !!$("#groupChatDebugFastMode")?.checked,
     role_overrides,
     activity_weights,
   };
@@ -2575,6 +2585,12 @@ const groupChatResetContextOnApply = $("#groupChatResetContextOnApply");
 if (groupChatResetContextOnApply) {
   groupChatResetContextOnApply.addEventListener("change", () => {
     groupChatResetContextOnApply.dataset.touched = "1";
+  });
+}
+const groupChatDebugFastMode = $("#groupChatDebugFastMode");
+if (groupChatDebugFastMode) {
+  groupChatDebugFastMode.addEventListener("change", () => {
+    groupChatDebugFastMode.dataset.touched = "1";
   });
 }
 

@@ -963,7 +963,7 @@ class GroupChatEngine:
                     f"■ {self._display_names.get(speaker, speaker)}: часть сообщения пропущена антидублем ({reason})"
                 )
                 continue
-            typing_sec = self._typing_seconds(part)
+            typing_sec = self._typing_seconds_for_session(session, part)
             current_reply_to = reply_to_msg_id if idx == 0 else None
             current_reply_account = reply_to_speaker_account_id if idx == 0 else ""
             current_reply_external = bool(reply_to_external and idx == 0)
@@ -1022,10 +1022,7 @@ class GroupChatEngine:
             self.log(f"→ {speaker}: {part[:80]}")
 
             if idx < len(parts) - 1:
-                pause = random.uniform(
-                    self.settings.delay_within_burst_min_sec,
-                    self.settings.delay_within_burst_max_sec,
-                )
+                pause = self._within_burst_delay(session)
                 if await self._sleep_interruptible(pause):
                     break
         if sent_any:
@@ -1168,6 +1165,42 @@ class GroupChatEngine:
         sec = s.typing_base_sec + len(text) * s.typing_per_char_sec
         return max(0.5, min(s.typing_max_sec, sec))
 
+    def _debug_fast_mode_enabled(self, session: GroupSessionRecord | None) -> bool:
+        return bool(session and session.debug_fast_mode)
+
+    def _typing_seconds_for_session(self, session: GroupSessionRecord | None, text: str) -> float:
+        if self._debug_fast_mode_enabled(session):
+            sec = 0.35 + len(text) * 0.01
+            return max(0.35, min(1.5, sec))
+        return self._typing_seconds(text)
+
+    def _between_speakers_delay(self, session: GroupSessionRecord | None) -> float:
+        if self._debug_fast_mode_enabled(session):
+            return random.uniform(5.0, 10.0)
+        return random.uniform(
+            self.settings.delay_between_speakers_min_sec,
+            self.settings.delay_between_speakers_max_sec,
+        )
+
+    def _within_burst_delay(self, session: GroupSessionRecord | None) -> float:
+        if self._debug_fast_mode_enabled(session):
+            return random.uniform(5.0, 10.0)
+        return random.uniform(
+            self.settings.delay_within_burst_min_sec,
+            self.settings.delay_within_burst_max_sec,
+        )
+
+    def _external_reply_cooldown(self, session: GroupSessionRecord | None) -> float:
+        if self._debug_fast_mode_enabled(session):
+            return random.uniform(5.0, 10.0)
+        return random.uniform(
+            self.settings.reply_to_humans_cooldown_min_sec,
+            max(
+                self.settings.reply_to_humans_cooldown_min_sec,
+                self.settings.reply_to_humans_cooldown_max_sec,
+            ),
+        )
+
     async def _sleep_interruptible(self, seconds: float) -> bool:
         """True если остановлены."""
         end = asyncio.get_event_loop().time() + max(0.0, seconds)
@@ -1264,6 +1297,7 @@ class GroupChatEngine:
         friendships: dict[str, list[str]] | None = None,
         reset_context_on_apply: bool = False,
         extra_context: str = "",
+        debug_fast_mode: bool = False,
         chat_title: str = "",
     ) -> None:
         self.reset_stop()
@@ -1328,6 +1362,7 @@ class GroupChatEngine:
             account_schedules=account_schedules,
             friendships=friendships,
             reset_context_on_apply=bool(reset_context_on_apply),
+            debug_fast_mode=bool(debug_fast_mode),
             scene_revision=1,
             extra_context=extra_context.strip(),
             status="active",
@@ -1549,20 +1584,14 @@ class GroupChatEngine:
                         self._handled_external_msg_ids.add(int(payload.get("msg_id") or 0))
                         self._pending_external_replies.pop(0)
                         self._refresh_pending_stats()
-                        cooldown = random.uniform(
-                            self.settings.reply_to_humans_cooldown_min_sec,
-                            max(
-                                self.settings.reply_to_humans_cooldown_min_sec,
-                                self.settings.reply_to_humans_cooldown_max_sec,
-                            ),
-                        )
+                        cooldown = self._external_reply_cooldown(session)
                         self._next_external_reply_after = asyncio.get_event_loop().time() + cooldown
                     else:
                         if await self._sleep_interruptible(10):
                             break
                     continue
 
-                if random.random() < self.settings.quiet_break_chance:
+                if not self._debug_fast_mode_enabled(session) and random.random() < self.settings.quiet_break_chance:
                     mins = random.randint(
                         self.settings.quiet_break_min_min,
                         max(self.settings.quiet_break_min_min, self.settings.quiet_break_max_min),
@@ -1571,7 +1600,7 @@ class GroupChatEngine:
                     self.log(f"⏸ Тихая пауза {mins} мин")
                     continue
 
-                if random.random() > self.settings.online_probability:
+                if not self._debug_fast_mode_enabled(session) and random.random() > self.settings.online_probability:
                     self.stats.status_text = "ожидание (вероятность онлайна)"
                     self._emit()
                     if await self._sleep_interruptible(random.uniform(20, 60)):
@@ -1589,7 +1618,7 @@ class GroupChatEngine:
                 if not client:
                     continue
 
-                if random.random() < self.settings.read_and_wait_chance:
+                if not self._debug_fast_mode_enabled(session) and random.random() < self.settings.read_and_wait_chance:
                     wait = random.uniform(
                         self.settings.read_and_wait_min_sec,
                         self.settings.read_and_wait_max_sec,
@@ -1671,10 +1700,7 @@ class GroupChatEngine:
                     reply_to_external=reply_to_external,
                 )
 
-                between = random.uniform(
-                    self.settings.delay_between_speakers_min_sec,
-                    self.settings.delay_between_speakers_max_sec,
-                )
+                between = self._between_speakers_delay(session)
                 self.stats.status_text = "пауза между репликами"
                 self._emit()
                 if await self._sleep_interruptible(between):

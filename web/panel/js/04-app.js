@@ -1986,6 +1986,11 @@ P.clearGroupChatScene = function() {
     resetToggle.checked = false;
     delete resetToggle.dataset.touched;
   }
+  const debugFastToggle = P.$("#groupChatDebugFastMode");
+  if (debugFastToggle) {
+    debugFastToggle.checked = false;
+    delete debugFastToggle.dataset.touched;
+  }
   const select = P.$("#groupChatSelect");
   if (select) {
     if (!Array.from(select.options).some((option) => option.value === "")) {
@@ -2258,6 +2263,10 @@ P.syncGroupChatFromStatus = function(st) {
   if (resetToggle && !resetToggle.dataset.touched) {
     resetToggle.checked = !!st.reset_context_on_apply;
   }
+  const debugFastToggle = P.$("#groupChatDebugFastMode");
+  if (debugFastToggle && !debugFastToggle.dataset.touched) {
+    debugFastToggle.checked = !!st.debug_fast_mode;
+  }
   if (Array.isArray(st.participants)) {
     st.participants.forEach((item) => {
       if (item.weight != null) groupChatWeightOverrides.set(item.account_id, item.weight);
@@ -2341,6 +2350,7 @@ P.buildGroupChatScenePayload = function() {
     topic,
     extra_context: P.$("#groupChatExtra").value,
     reset_context_on_apply: !!P.$("#groupChatResetContextOnApply")?.checked,
+    debug_fast_mode: !!P.$("#groupChatDebugFastMode")?.checked,
     role_overrides,
     activity_weights,
   };
@@ -2591,6 +2601,12 @@ const groupChatResetContextOnApply = P.$("#groupChatResetContextOnApply");
 if (groupChatResetContextOnApply) {
   groupChatResetContextOnApply.addEventListener("change", () => {
     groupChatResetContextOnApply.dataset.touched = "1";
+  });
+}
+const groupChatDebugFastMode = P.$("#groupChatDebugFastMode");
+if (groupChatDebugFastMode) {
+  groupChatDebugFastMode.addEventListener("change", () => {
+    groupChatDebugFastMode.dataset.touched = "1";
   });
 }
 

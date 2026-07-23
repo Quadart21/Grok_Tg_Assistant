@@ -182,6 +182,7 @@ class GroupChatStartBody(BaseModel):
     topic: str = ""
     extra_context: str = ""
     reset_context_on_apply: bool = False
+    debug_fast_mode: bool = False
     role_overrides: dict[str, GroupChatRoleOverride] = {}
     activity_weights: dict[str, float] = {}
     account_schedules: dict[str, list[dict]] = {}

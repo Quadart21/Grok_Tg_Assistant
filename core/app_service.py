@@ -1398,6 +1398,7 @@ class AppService:
             "account_schedules": schedules,
             "friendships": friendships,
             "reset_context_on_apply": session.reset_context_on_apply if session else False,
+            "debug_fast_mode": session.debug_fast_mode if session else False,
             "scene_revision": session.scene_revision if session else 0,
             "created_at": session.created_at if session else "",
             "last_activity": session.last_activity if session else "",
@@ -1416,6 +1417,7 @@ class AppService:
         friendships: dict[str, list[str]] | None = None,
         extra_context: str = "",
         reset_context_on_apply: bool = False,
+        debug_fast_mode: bool = False,
         chat_title: str = "",
     ) -> tuple[bool, str]:
         with self._lock:
@@ -1487,6 +1489,7 @@ class AppService:
                         friendships=normalized_friendships,
                         extra_context=extra_context,
                         reset_context_on_apply=bool(reset_context_on_apply),
+                        debug_fast_mode=bool(debug_fast_mode),
                         chat_title=chat_title,
                     )
                 )
@@ -1513,6 +1516,7 @@ class AppService:
         friendships: dict[str, list[str]] | None = None,
         extra_context: str = "",
         reset_context_on_apply: bool = False,
+        debug_fast_mode: bool = False,
         chat_title: str = "",
     ) -> tuple[bool, str]:
         with self._lock:
@@ -1594,6 +1598,7 @@ class AppService:
                 day_key=current.day_key if current else "",
                 group_day_count=current.group_day_count if current else 0,
                 reset_context_on_apply=should_reset_context,
+                debug_fast_mode=bool(debug_fast_mode),
                 scene_revision=next_scene_revision,
             )
             self.state_store.upsert_group_session(session)
