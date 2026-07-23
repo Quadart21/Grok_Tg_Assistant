@@ -55,6 +55,13 @@ def register(app: FastAPI, service: AppService) -> None:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.post("/api/accounts/pick-photo-library-dir")
+    def api_pick_photo_library_dir() -> dict:
+        try:
+            return service.pick_profile_photo_library_dir()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/api/accounts/{account_id}/profile")
     def api_save_account_profile(account_id: str, body: SessionProfileBody) -> dict:
         try:

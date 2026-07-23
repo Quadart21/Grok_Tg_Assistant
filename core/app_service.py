@@ -183,6 +183,38 @@ class AppService:
             if path.is_file() and path.suffix.lower() in allowed
         )
 
+    def pick_profile_photo_library_dir(self) -> dict[str, Any]:
+        """Открывает системный диалог выбора папки и возвращает путь относительно проекта."""
+        import tkinter as tk
+        from tkinter import filedialog
+
+        initial = self.base_dir / "assets"
+        if not initial.is_dir():
+            initial = self.base_dir
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            root.wm_attributes("-topmost", True)
+        except Exception:
+            pass
+        try:
+            chosen = filedialog.askdirectory(
+                parent=root,
+                initialdir=str(initial),
+                title="Выберите папку с фото внутри проекта",
+                mustexist=True,
+            )
+        finally:
+            root.destroy()
+
+        if not chosen:
+            return {"cancelled": True, "path": ""}
+
+        resolved = self._resolve_profile_library_dir(chosen)
+        relative = resolved.relative_to(self.base_dir.resolve()).as_posix()
+        return {"cancelled": False, "path": relative}
+
     def _profile_rotation_due(self, last_ts: str, every_hours: int) -> bool:
         interval = max(int(every_hours or 0), 1)
         last_dt = self._parse_iso_dt(last_ts)

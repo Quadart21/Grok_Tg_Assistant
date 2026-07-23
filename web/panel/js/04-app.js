@@ -568,7 +568,8 @@ P.sessionStatusChip = function(account) {
   if (!account) return '<span class="chip muted">нет данных</span>';
   if (account.session_health === "busy") return '<span class="chip">в работе</span>';
   if (account.session_health === "alive") return '<span class="chip ok">жива</span>';
-  if (account.session_health === "dead") return '<span class="chip danger">ошибка сессии</span>';
+  if (account.session_health === "dead") return '<span class="chip danger">сессия умерла</span>';
+  if (account.session_health === "error") return '<span class="chip warn">ошибка проверки</span>';
   if (account.session_health === "checking") return '<span class="chip warn">проверяется</span>';
   if (account.session_health === "unknown") return '<span class="chip muted">нет api</span>';
   if (account.session_health === "needs_conversion") return '<span class="chip warn">нужна конвертация</span>';
@@ -596,6 +597,7 @@ P.renderAccountsSummary = function() {
   const issues = P.state.accountsCache.filter((a) =>
     !a.is_active ||
     a.session_health === "dead" ||
+    a.session_health === "error" ||
     a.session_health === "unknown" ||
     (a.format === "tdata" && !a.session_ready) ||
     !a.proxy
@@ -678,10 +680,35 @@ P.clearSessionProfileForm = function(msg = "") {
   if (P.$("#sessionPhotoRotationHours")) P.$("#sessionPhotoRotationHours").value = 78;
   if (P.$("#sessionAboutRotationHours")) P.$("#sessionAboutRotationHours").value = 78;
   if (P.$("#btnReloadSessionProfile")) P.$("#btnReloadSessionProfile").disabled = !hasAccount;
+  if (P.$("#btnPickPhotoLibraryDir")) P.$("#btnPickPhotoLibraryDir").disabled = !hasAccount;
   if (P.$("#btnRotateSessionPhotoNow")) P.$("#btnRotateSessionPhotoNow").disabled = !hasAccount;
   if (P.$("#btnRefreshSessionAboutNow")) P.$("#btnRefreshSessionAboutNow").disabled = !hasAccount;
   if (P.$("#btnSaveSessionProfile")) P.$("#btnSaveSessionProfile").disabled = !hasAccount;
   if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = msg;
+}
+
+P.pickPhotoLibraryDir = async function() {
+  if (!P.state.selectedAccount) return;
+  const btn = P.$("#btnPickPhotoLibraryDir");
+  if (btn) btn.disabled = true;
+  if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = "Выберите папку с фото...";
+  try {
+    const result = await P.api("/api/accounts/pick-photo-library-dir", { method: "POST", body: "{}" });
+    if (result?.cancelled) {
+      if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = "Выбор папки отменён.";
+      return;
+    }
+    if (P.$("#sessionPhotoLibraryDir")) P.$("#sessionPhotoLibraryDir").value = result?.path || "";
+    if (P.$("#sessionProfileMsg")) {
+      P.$("#sessionProfileMsg").textContent = result?.path
+        ? `Папка выбрана: ${result.path}`
+        : "Папка не выбрана.";
+    }
+  } catch (e) {
+    if (P.$("#sessionProfileMsg")) P.$("#sessionProfileMsg").textContent = e.message || "Не удалось выбрать папку";
+  } finally {
+    if (btn) btn.disabled = !P.state.selectedAccount;
+  }
 }
 
 P.fillSessionProfileForm = function(profile) {
@@ -814,7 +841,8 @@ P.renderSessionDetail = function() {
     <div><dt>Флаги</dt><dd>${[
       acc.is_active ? "активен" : "неактивен",
       acc.session_health === "busy" ? "в работе" : "",
-      acc.session_health === "dead" ? "ошибка сессии" : "",
+      acc.session_health === "dead" ? "сессия умерла" : "",
+      acc.session_health === "error" ? "ошибка проверки" : "",
       acc.twofa_file ? `2FA: ${acc.twofa_file}` : "без 2FA файла",
       acc.is_duplicate ? "дубль" : "основная запись",
     ].map((x) => P.safeText(x)).join(" · ")}</dd></div>`;
@@ -1036,7 +1064,8 @@ P.renderAccountsTable = function() {
       a.is_duplicate ? '<span class="chip warn">дубль</span>' : "",
       !a.is_active ? '<span class="chip danger">неактивен</span>' : "",
       a.session_health === "busy" ? '<span class="chip">в работе</span>' : "",
-      a.session_health === "dead" ? '<span class="chip danger">ошибка</span>' : "",
+      a.session_health === "dead" ? '<span class="chip danger">сессия умерла</span>' : "",
+      a.session_health === "error" ? '<span class="chip warn">ошибка проверки</span>' : "",
     ].filter(Boolean).join(" ");
     tr.innerHTML = `
       <td><input type="checkbox" class="acc-chk" data-id="${P.escapeHtml(a.id)}" ${checked} ${canSelect ? "" : "disabled"} onclick="event.stopPropagation()"></td>
@@ -1416,6 +1445,10 @@ P.$("#btnClearProxy").onclick = async () => {
 
 P.$("#btnReloadSessionProfile")?.addEventListener("click", async () => {
   await P.loadSessionProfile(P.state.selectedAccount);
+});
+
+P.$("#btnPickPhotoLibraryDir")?.addEventListener("click", async () => {
+  await P.pickPhotoLibraryDir();
 });
 
 P.$("#btnRotateSessionPhotoNow")?.addEventListener("click", async () => {

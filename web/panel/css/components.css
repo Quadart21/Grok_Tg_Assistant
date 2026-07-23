@@ -235,7 +235,8 @@ input[type="checkbox"], input[type="radio"] {
   align-items: center;
 }
 
-.row-inline select { flex: 1; min-width: 0; }
+.row-inline select,
+.row-inline input { flex: 1; min-width: 0; }
 
 /* ─── Tables ─── */
 .table-wrap {
