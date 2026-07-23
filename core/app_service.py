@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import threading
 import time
 from collections import deque
@@ -72,8 +73,9 @@ def apply_profile_template(template: str, account_id: str, index: int) -> str:
 
 
 class AppService:
-    SESSION_HEALTH_INTERVAL_SEC = 45
-    SESSION_HEALTH_CONNECT_TIMEOUT_SEC = 20
+    SESSION_HEALTH_INTERVAL_SEC = 20
+    SESSION_HEALTH_CONNECT_TIMEOUT_SEC = 8
+    SESSION_HEALTH_MAX_CONCURRENCY = 6
 
     def __init__(self, base_dir: Path) -> None:
         self.base_dir = base_dir
@@ -433,6 +435,20 @@ class AppService:
             "checked_at": "",
         }
 
+    def _is_fatal_session_error(self, error_text: str) -> bool:
+        text = (error_text or "").lower()
+        fatal_markers = (
+            "auth key",
+            "authkey",
+            "session revoked",
+            "unauthorized",
+            "not authorized",
+            "user deactivated",
+            "deleted/deactivated",
+            "banned",
+        )
+        return any(marker in text for marker in fatal_markers)
+
     async def _probe_session_health(self, session, proxies: dict[str, ProxyConfig]) -> dict[str, Any]:
         runtime = self._session_runtime_status(session.account_id)
         if runtime:
@@ -472,10 +488,12 @@ class AppService:
             await asyncio.wait_for(client.connect(), timeout=self.SESSION_HEALTH_CONNECT_TIMEOUT_SEC)
             return self._session_health_payload("alive", label="жива")
         except Exception as exc:
+            error_text = format_telegram_error(exc)
+            is_fatal = self._is_fatal_session_error(error_text)
             return self._session_health_payload(
-                "dead",
+                "dead" if is_fatal else "error",
                 label="ошибка сессии",
-                error=format_telegram_error(exc),
+                error=error_text,
             )
         finally:
             try:
@@ -483,8 +501,40 @@ class AppService:
             except Exception:
                 pass
 
+    async def _probe_all_session_health(
+        self,
+        sessions: list[Any],
+        proxies: dict[str, ProxyConfig],
+    ) -> None:
+        semaphore = asyncio.Semaphore(self.SESSION_HEALTH_MAX_CONCURRENCY)
+
+        async def run_one(session) -> tuple[str, dict[str, Any]]:
+            async with semaphore:
+                try:
+                    payload = await self._probe_session_health(session, proxies)
+                except Exception as exc:
+                    payload = self._session_health_payload(
+                        "error",
+                        label="ошибка проверки",
+                        error=str(exc),
+                    )
+                return session.account_id, payload
+
+        tasks = [asyncio.create_task(run_one(session)) for session in sessions]
+        try:
+            for task in asyncio.as_completed(tasks):
+                account_id, payload = await task
+                self._session_health_cache[account_id] = payload
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            for task in tasks:
+                with contextlib.suppress(Exception):
+                    await task
+
     def _session_health_loop(self) -> None:
-        while not self._session_health_stop.wait(self.SESSION_HEALTH_INTERVAL_SEC):
+        while not self._session_health_stop.is_set():
             try:
                 sessions = discover_sessions(self.base_dir / self.config.sessions_dir)
                 proxies = load_proxies(self.proxies_path)
@@ -493,18 +543,18 @@ class AppService:
                 for account_id in stale_ids:
                     self._session_health_cache.pop(account_id, None)
                 for session in sessions:
-                    try:
-                        payload = asyncio.run(self._probe_session_health(session, proxies))
-                    except Exception as exc:
-                        payload = self._session_health_payload(
-                            "dead",
-                            label="ошибка проверки",
-                            error=str(exc),
-                        )
-                    self._session_health_cache[session.account_id] = payload
-                    time.sleep(0.2)
+                    self._session_health_cache[session.account_id] = {
+                        **self._get_session_health(session.account_id),
+                        "status": "checking",
+                        "label": "проверяется",
+                        "error": "",
+                    }
+                asyncio.run(self._probe_all_session_health(sessions, proxies))
             except Exception as exc:
                 self.log(f"⚠ Монитор сессий: {exc}")
+
+            if self._session_health_stop.wait(self.SESSION_HEALTH_INTERVAL_SEC):
+                break
 
     def get_logs(self, since: int = 0) -> list[str]:
         logs = list(self._logs)
@@ -757,9 +807,10 @@ class AppService:
             twofa_file = find_twofa_file(s)
             session_ready = s.format == SessionFormat.TELEthon or has_converted_session(s)
             is_assistant = s.account_id in agent_ids
-            is_active = session_ready
-            outreach_eligible = is_active and not is_assistant
             health = self._get_session_health(s.account_id)
+            health_status = str(health.get("status", "checking"))
+            is_active = session_ready and health_status != "dead"
+            outreach_eligible = is_active and not is_assistant
             result.append(
                 {
                     "id": s.account_id,
@@ -775,7 +826,7 @@ class AppService:
                     "outreach_eligible": outreach_eligible,
                     "twofa_file": twofa_file.name if twofa_file else "",
                     "is_duplicate": is_import_duplicate(s.account_id, all_ids),
-                    "session_health": health.get("status", "checking"),
+                    "session_health": health_status,
                     "session_health_label": health.get("label", "проверяется"),
                     "session_health_error": health.get("error", ""),
                     "session_health_checked_at": health.get("checked_at", ""),
@@ -1293,7 +1344,11 @@ class AppService:
             photo_path=data.get("photo_path"),
         )
         binding = self._update_account_automation_settings(account_id, data)
-        result["profile"].update(self._build_profile_automation_payload(binding))
+        profile = result.setdefault("profile", {})
+        if not isinstance(profile, dict):
+            profile = {}
+            result["profile"] = profile
+        profile.update(self._build_profile_automation_payload(binding))
         return result
 
     def get_roles_dict(self) -> dict[str, Any]:
